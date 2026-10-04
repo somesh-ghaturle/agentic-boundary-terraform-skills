@@ -20,4 +20,20 @@ if out=$("$b" check "$work/proj" 2>&1); then
 fi
 echo "$out" | grep -q '^== write boundary' && echo "$out" | grep -q 'gate failed' \
   || { echo "FAIL: check failed for the wrong reason:"; echo "$out"; exit 1; }
-echo "PASS: clean tree passes, widened orchestrator is refused"
+
+# The agent being gated must not be able to pass by weakening the gate itself.
+"$b" fetch aws "$work/tamper"
+rm "$work/tamper/terraform-aws/tests/test_write_boundary.py"
+if out=$("$b" check "$work/tamper" 2>&1); then
+  echo "FAIL: check passed with the write-boundary test deleted"; exit 1
+fi
+echo "$out" | grep -q '^== gate files match' || { echo "FAIL: tamper refused for the wrong reason:"; echo "$out"; exit 1; }
+
+# Nor by pointing the pin at another directory.
+sed -i.bak 's/^cloud=.*/cloud=..\/decoy/' "$work/tamper/.boundary/pin"
+if out=$("$b" check "$work/tamper" 2>&1); then
+  echo "FAIL: check accepted a pin that names a path"; exit 1
+fi
+echo "$out" | grep -q 'unknown cloud' || { echo "FAIL: bad pin refused for the wrong reason:"; echo "$out"; exit 1; }
+
+echo "PASS: clean tree passes; widened orchestrator, deleted test and redirected pin are refused"

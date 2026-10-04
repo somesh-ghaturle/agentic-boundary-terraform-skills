@@ -33,7 +33,7 @@ skills/terraform-boundary/scripts/boundary.sh check ./infra
 
 ## Status
 
-Version 1.0.0. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
+Version 1.0.1. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
 
 `tests/test_boundary.sh` proves the gate works. It fetches the AWS tree, checks that it passes, then makes the one-word edit that hands every tool to the orchestrator and checks that the gate refuses it.
 

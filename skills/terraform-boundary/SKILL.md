@@ -7,7 +7,7 @@ description: Deploy or change an AI agent's cloud infrastructure on AWS, Azure, 
 
 The property this skill protects: **the orchestrator can invoke read tools only. Write tools run only through the approval executor, after a human approves that specific action.** The cloud's identity platform enforces it, not the prompt.
 
-Source of truth: [Agentic-AI-Systems at v0.1.0](https://github.com/somesh-ghaturle/Agentic-AI-Systems/tree/v0.1.0). The script below copies from that tag, so the Terraform never drifts under you. Set `AGENTIC_BOUNDARY_TAG` to move to a newer release on purpose.
+Source of truth: [Agentic-AI-Systems at v0.1.0](https://github.com/somesh-ghaturle/Agentic-AI-Systems/tree/v0.1.0). The script below copies from that tag, so the Terraform never drifts under you. Set `AGENTIC_BOUNDARY_TAG` to move to a newer release on purpose. Before every run, `check` compares the tests, policies and pin checker in your project with a fresh copy of the pinned release, and refuses if they differ.
 
 ## Hard rules
 
