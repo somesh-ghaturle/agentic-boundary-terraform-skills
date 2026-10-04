@@ -1,0 +1,14 @@
+{
+  "name": "agentic-boundary",
+  "description": "Skills that deploy AI agents behind a human-approval write boundary, on Terraform across AWS, Azure, GCP and Snowflake.",
+  "owner": {
+    "name": "Somesh Ghaturle"
+  },
+  "plugins": [
+    {
+      "name": "agentic-boundary-terraform",
+      "source": "./",
+      "description": "Adapt the Agentic-AI-Systems Terraform to AWS, Azure, GCP or Snowflake without breaking the human-approval write boundary."
+    }
+  ]
+}
