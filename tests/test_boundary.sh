@@ -40,4 +40,15 @@ if out=$("$b" check "$work/tamper" 2>&1); then
 fi
 echo "$out" | grep -q 'unknown cloud' || { echo "FAIL: bad pin refused for the wrong reason:"; echo "$out"; exit 1; }
 
-echo "PASS: clean tree passes; widened orchestrator is refused, even with the project's test deleted; redirected pin is refused"
+# Nor by hiding Terraform where the text-based tests do not look.
+"$b" fetch aws "$work/shapes"
+printf '{}\n' > "$work/shapes/terraform-aws/envs/dev/widen.tf.json"
+"$b" check "$work/shapes" >/dev/null 2>&1 && { echo "FAIL: check accepted a .tf.json file"; exit 1; }
+rm "$work/shapes/terraform-aws/envs/dev/widen.tf.json"
+mv "$work/shapes/terraform-aws/envs/dev" "$work/decoy-dev" && ln -s "$work/decoy-dev" "$work/shapes/terraform-aws/envs/dev"
+if out=$("$b" check "$work/shapes" 2>&1); then
+  echo "FAIL: check accepted a symlinked env root"; exit 1
+fi
+echo "$out" | grep -q 'cannot judge' || { echo "FAIL: symlink refused for the wrong reason:"; echo "$out"; exit 1; }
+
+echo "PASS: clean tree passes; widened orchestrator, deleted project test, redirected pin, .tf.json and symlinked env root are all refused"

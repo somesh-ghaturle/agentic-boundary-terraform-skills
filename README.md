@@ -33,7 +33,7 @@ skills/terraform-boundary/scripts/boundary.sh check ./infra
 
 ## Status
 
-Version 1.0.2. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
+Version 1.0.3. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
 
 `tests/test_boundary.sh` proves the gate works. It fetches the AWS tree, checks that it passes, then makes the one-word edit that hands every tool to the orchestrator and checks that the gate refuses it.
 
@@ -42,6 +42,10 @@ bash tests/test_boundary.sh
 ```
 
 The gate trusts nothing in your project except the Terraform it judges. Its tests, policies and checker come from the pinned release on every run, so editing them in the project changes nothing.
+
+## Limits
+
+The gates read Terraform source as text. They refuse symlinks, `.tf.json` files and override files, because Terraform reads those and the tests do not. They cannot see values in `.tfvars`, including whether each tool is labelled `read` or `write`, or anything only known at plan time. A human confirms the tool labels and the orchestrator's grants in the plan before running `apply`.
 
 Security review and regulated-environment evidence are sections of the one skill for now. They become separate skills when they have checks of their own to run.
 

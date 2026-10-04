@@ -14,7 +14,8 @@ Source of truth: [Agentic-AI-Systems at v0.1.0](https://github.com/somesh-ghatur
 1. **Never run `terraform apply`**, and never `destroy`. Stop at `plan` and hand it to a human. An agent applying its own infrastructure is the exact failure this skill exists to prevent.
 2. **Never edit anything under `terraform-<cloud>/tests/` or `.boundary/`** to make a gate pass. A failing gate means the change is wrong. Fix the change, or stop and tell the user which gate failed and why.
 3. **Never widen what the orchestrator can invoke.** No write tool ARN, role, member or grant reaches the orchestrator's identity, directly or through inheritance.
-4. **Say where the clouds differ.** Do not tell the user the guarantee is the same everywhere. It is not.
+4. **Never relabel a write tool as `read`**, in `.tf` or in `.tfvars`. Tool declarations, including each tool's `access` label, live in `terraform.tfvars`, which no gate can read. The label is trusted, so only a human can catch a wrong one.
+5. **Say where the clouds differ.** Do not tell the user the guarantee is the same everywhere. It is not.
 
 ## Step 1: pick the cloud
 
@@ -62,10 +63,12 @@ Section 2 of each tree's `ARCHITECTURE.md` explains why each line matters. Read 
 ## Step 4: gate
 
 ```bash
-scripts/boundary.sh check <project-dir> | tee <project-dir>/.boundary/evidence-$(date +%F).log
+set -o pipefail; scripts/boundary.sh check <project-dir> 2>&1 | tee <project-dir>/.boundary/evidence-$(date +%F).log
 ```
 
-The gates run in order and stop at the first failure:
+`pipefail` matters: without it the pipeline reports `tee`'s success even when a gate failed. A non-zero exit means stop.
+
+Before any gate, `check` refuses symlinks, `.tf.json` files and override files in the tree, because Terraform reads them and the text-based tests do not. The gates then run in order and stop at the first failure:
 
 1. **write boundary:** the pinned release's tests for that tree, which read your `.tf` source and fail on the edits `terraform validate` accepts.
 2. **provider pins:** every provider pins a major, and one tree agrees with itself.
@@ -76,7 +79,14 @@ All four must pass before Step 5. Keep the evidence log; the regulated section b
 
 ## Step 5: plan, then stop
 
-Only if the user asks and has cloud credentials. For `aws`, `azure` and `gcp`, run `terraform-<cloud>/src/build.sh` first, because plan reads the function packages. Then run `terraform -chdir=<project-dir>/terraform-<cloud>/envs/<env> plan -out=tfplan`, show the summary, and stop. The human reviews it and runs apply.
+Only if the user asks and has cloud credentials. For `aws`, `azure` and `gcp`, run `terraform-<cloud>/src/build.sh` first, because plan reads the function packages. Then run `terraform -chdir=<project-dir>/terraform-<cloud>/envs/<env> plan -out=tfplan`, show the summary, and stop.
+
+The gates read source text, so they cannot see `.tfvars` values or anything only known at plan time. Ask the human to confirm two things before they apply:
+
+1. **Every tool's label:** list each tool and its `access` value from `terraform.tfvars`. On `snowflake`, list which of the read and write tool variables each one sits in. Every tool that changes state must be a write tool.
+2. **The orchestrator's grants in the plan:** its identity policy, invoker bindings or role grants name read tools only.
+
+Then the human runs apply.
 
 ## Security review
 

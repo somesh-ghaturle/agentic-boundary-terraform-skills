@@ -12,7 +12,13 @@
 # and commit. Every gate file (tests, policies, the provider-pin checker) comes from a fresh
 # clone of that commit, and the project's .tf files are copied next to them in a scratch
 # directory. Editing the project's own tests, its pin, or a __pycache__ changes nothing.
-# This does not defend against someone who can edit this script or the machine itself.
+#
+# The pinned tests read .tf files as text and do not follow symlinks. Terraform also reads
+# .tf.json and override files and follows symlinks, so check refuses all three rather than pass
+# something the tests never saw. Two things stay out of reach of any static gate: values in
+# *.tfvars, including each tool's read/write label, and anything only known at plan time.
+# A human reviewing the plan is the final check for those. This also does not defend against
+# someone who can edit this script or the machine itself.
 set -euo pipefail
 
 REPO=https://github.com/somesh-ghaturle/Agentic-AI-Systems.git
@@ -50,7 +56,13 @@ check() {
   [ -f "$dest/.boundary/pin" ] || die "no $dest/.boundary/pin; run boundary.sh fetch first"
   local cloud; cloud=$(sed -n 's/^cloud=//p' "$dest/.boundary/pin")
   valid_cloud "$cloud" || die "pin names an unknown cloud: '$cloud'"
-  [ -d "$dest/terraform-$cloud" ] || die "no $dest/terraform-$cloud to check"
+  local tree=$dest/terraform-$cloud
+  [ -d "$tree" ] && [ ! -L "$tree" ] || die "$tree is missing or is a symlink"
+  local odd
+  odd=$(find "$tree" -name .terraform -prune -o \( -type l -o -name '*.tf.json' -o -name 'override.tf' \
+    -o -name '*_override.tf' \) -print | head -5)
+  [ -z "$odd" ] || die "refusing files the pinned tests cannot judge (symlinks, .tf.json, override files):
+$odd"
   need git ""
   need python3 ""
   need conftest "Install it from https://www.conftest.dev/install/"
@@ -60,7 +72,7 @@ check() {
   # The project's Terraform, minus its tests and any .terraform state, beside the pinned tests.
   local chk=$tmp/check/terraform-$cloud
   mkdir -p "$tmp/check"
-  cp -R "$dest/terraform-$cloud" "$chk"
+  cp -R "$tree" "$chk"
   rm -rf "$chk/tests"
   find "$chk" -name .terraform -prune -exec rm -rf {} +
   cp -R "$tmp/src/infra/terraform-$cloud/tests" "$chk/tests"
