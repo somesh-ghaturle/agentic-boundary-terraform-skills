@@ -20,7 +20,7 @@ Ask Claude to deploy or change an agent with human approval gates, for example "
 1. Picks a cloud with you: AWS, Azure, GCP or Snowflake, and says where their guarantees differ.
 2. Copies that tree from Agentic-AI-Systems at the pinned tag `v0.1.0`.
 3. Adapts it, without touching the lines that keep write tools away from the orchestrator.
-4. Runs four gates and stops at the first failure: the tree's write-boundary tests, the provider-pin check, the OPA policies, and `terraform validate` on every environment.
+4. Runs four gates and stops at the first failure: the pinned release's write-boundary tests, provider-pin check and OPA policies, and `terraform validate` on every environment.
 5. Reviews the change against the threat model, and records evidence for regulated environments.
 6. Runs `terraform plan` if you ask, then stops. A human runs `apply`.
 
@@ -33,13 +33,15 @@ skills/terraform-boundary/scripts/boundary.sh check ./infra
 
 ## Status
 
-Version 1.0.1. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
+Version 1.0.2. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
 
 `tests/test_boundary.sh` proves the gate works. It fetches the AWS tree, checks that it passes, then makes the one-word edit that hands every tool to the orchestrator and checks that the gate refuses it.
 
 ```bash
 bash tests/test_boundary.sh
 ```
+
+The gate trusts nothing in your project except the Terraform it judges. Its tests, policies and checker come from the pinned release on every run, so editing them in the project changes nothing.
 
 Security review and regulated-environment evidence are sections of the one skill for now. They become separate skills when they have checks of their own to run.
 

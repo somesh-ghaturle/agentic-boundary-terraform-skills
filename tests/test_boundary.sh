@@ -21,19 +21,23 @@ fi
 echo "$out" | grep -q '^== write boundary' && echo "$out" | grep -q 'gate failed' \
   || { echo "FAIL: check failed for the wrong reason:"; echo "$out"; exit 1; }
 
-# The agent being gated must not be able to pass by weakening the gate itself.
+# The agent being gated must not be able to pass by weakening the gate itself: deleting the
+# project's copy of the test changes nothing, because check runs the pinned release's tests.
 "$b" fetch aws "$work/tamper"
 rm "$work/tamper/terraform-aws/tests/test_write_boundary.py"
+perl -0pi -e 's/module\.tools\.read_tool_arns,\n(\s*\[module\.approval\.validator_arn\])/values(module.tools.tool_arns_by_name),\n$1/' \
+  "$work/tamper/terraform-aws/envs/dev/main.tf"
 if out=$("$b" check "$work/tamper" 2>&1); then
-  echo "FAIL: check passed with the write-boundary test deleted"; exit 1
+  echo "FAIL: check passed with the project's test deleted and the boundary widened"; exit 1
 fi
-echo "$out" | grep -q '^== gate files match' || { echo "FAIL: tamper refused for the wrong reason:"; echo "$out"; exit 1; }
+echo "$out" | grep -q '^== write boundary' && echo "$out" | grep -q 'gate failed' \
+  || { echo "FAIL: tamper refused for the wrong reason:"; echo "$out"; exit 1; }
 
 # Nor by pointing the pin at another directory.
-sed -i.bak 's/^cloud=.*/cloud=..\/decoy/' "$work/tamper/.boundary/pin"
+printf 'cloud=../decoy\n' > "$work/tamper/.boundary/pin"
 if out=$("$b" check "$work/tamper" 2>&1); then
   echo "FAIL: check accepted a pin that names a path"; exit 1
 fi
 echo "$out" | grep -q 'unknown cloud' || { echo "FAIL: bad pin refused for the wrong reason:"; echo "$out"; exit 1; }
 
-echo "PASS: clean tree passes; widened orchestrator, deleted test and redirected pin are refused"
+echo "PASS: clean tree passes; widened orchestrator is refused, even with the project's test deleted; redirected pin is refused"

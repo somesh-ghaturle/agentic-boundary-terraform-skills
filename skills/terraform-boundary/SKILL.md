@@ -7,7 +7,7 @@ description: Deploy or change an AI agent's cloud infrastructure on AWS, Azure, 
 
 The property this skill protects: **the orchestrator can invoke read tools only. Write tools run only through the approval executor, after a human approves that specific action.** The cloud's identity platform enforces it, not the prompt.
 
-Source of truth: [Agentic-AI-Systems at v0.1.0](https://github.com/somesh-ghaturle/Agentic-AI-Systems/tree/v0.1.0). The script below copies from that tag, so the Terraform never drifts under you. Set `AGENTIC_BOUNDARY_TAG` to move to a newer release on purpose. Before every run, `check` compares the tests, policies and pin checker in your project with a fresh copy of the pinned release, and refuses if they differ.
+Source of truth: [Agentic-AI-Systems at v0.1.0](https://github.com/somesh-ghaturle/Agentic-AI-Systems/tree/v0.1.0). The script pins that release by tag and commit, so the Terraform never drifts under you. `check` runs the tests, policies and provider-pin checker from a fresh copy of that release, never the copies in the project, so editing them cannot change a verdict. Moving to a newer release means updating this skill.
 
 ## Hard rules
 
@@ -35,7 +35,7 @@ If nothing decides it, use `aws`. The hybrid tree in that repo is an opt-in proo
 scripts/boundary.sh fetch <aws|azure|gcp|snowflake> <project-dir>
 ```
 
-This writes `<project-dir>/terraform-<cloud>/` and `<project-dir>/.boundary/`, which holds the policies, the provider-pin checker and a `pin` file recording the tag and commit. It refuses to overwrite an existing tree. Paths to `scripts/` are relative to this skill's directory.
+This writes `<project-dir>/terraform-<cloud>/` and `<project-dir>/.boundary/pin`, which records the cloud. It refuses to overwrite an existing tree. Paths to `scripts/` are relative to this skill's directory.
 
 Then run the gates once, before any edit, so you know the starting point is clean:
 
@@ -67,7 +67,7 @@ scripts/boundary.sh check <project-dir> | tee <project-dir>/.boundary/evidence-$
 
 The gates run in order and stop at the first failure:
 
-1. **write boundary:** the tree's own `tests/`, which read the `.tf` source and fail on the edits `terraform validate` accepts.
+1. **write boundary:** the pinned release's tests for that tree, which read your `.tf` source and fail on the edits `terraform validate` accepts.
 2. **provider pins:** every provider pins a major, and one tree agrees with itself.
 3. **policies:** the OPA policies, such as a content filter that nothing references.
 4. **validate:** `terraform init -backend=false` and `validate` on every env root.
@@ -93,4 +93,4 @@ If any answer is "more than before", stop and tell the user before planning.
 
 For a regulated deployment, also work through the [governance](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/docs/governance-checklist.md), [security](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/docs/security-checklist.md) and [privacy](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/docs/privacy-checklist.md) checklists, and read [COMPLIANCE.md](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/COMPLIANCE.md) for the evidence model.
 
-Hand the user one evidence record per change: the `.boundary/pin` file, the Step 4 log, the four security answers, the plan summary, and the name of the human who will apply it. These checklists support a compliance review. They do not certify one, and you must not say that they do.
+Hand the user one evidence record per change: the Step 4 log, whose last line names the release and commit the gates ran against, the four security answers, the plan summary, and the name of the human who will apply it. These checklists support a compliance review. They do not certify one, and you must not say that they do.
