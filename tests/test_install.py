@@ -52,7 +52,7 @@ class Install(unittest.TestCase):
         matcher = re.compile(self.config(".cursor/hooks.json")["hooks"]["beforeShellExecution"][0]["matcher"])
         for cmd in ["terraform apply", "TERRAFORM apply", '"terra""form" apply', "t\\erraform apply",
                     "{terraform,apply}", "tofu apply", "scripts/boundary.sh apply . dev",
-                    "terraform plan -auto-approve", "$'\\x74erraform' apply"]:
+                    "terraform plan -auto-approve", "$'\\x74erraform' apply", "ter\\\nraform apply"]:
             with self.subTest(cmd=cmd):
                 self.assertIsNotNone(matcher.search(cmd))
         self.assertIsNone(matcher.search("git status"))

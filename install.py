@@ -28,11 +28,12 @@ def cursor_matcher():
     """A regex that matches every command the guard could react to.
 
     Cursor applies it to the raw command before the guard runs, so it must not be narrower than
-    the guard: the shell turns "terra""form" and t\\erraform into terraform, and macOS runs
+    the guard: the shell turns "terra""form", t\\erraform and a backslash-continued line into
+    terraform, and macOS runs
     TERRAFORM. So any letter case, with quotes or backslashes allowed between letters, plus
     ANSI-C quoting, which can spell anything.
     """
-    gap = r"""[\\'"]*"""
+    gap = r"""[\\'"\r\n]*"""
     def spelled(word):
         return gap.join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else "\\" + c if c == "." else c
                         for c in word)

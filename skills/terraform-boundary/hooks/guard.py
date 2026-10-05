@@ -44,11 +44,18 @@ INDIRECT = {"xargs", "parallel", "alias", "eval", "source", ".", "function"}
 def words(command):
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
+    # shlex treats # anywhere as a comment; bash only at the start of a word, so in
+    # `echo a#b; terraform apply` bash runs the apply. With comments off the guard reads
+    # everything, including real comments, which can only make it stricter.
+    lexer.commenters = ""
     return list(lexer)
 
 
 def problem(command, depth=0):
     """Why this command must not run, or None."""
+    # Bash joins a line ending in a backslash to the next one, so ter\<newline>raform is
+    # terraform. Join them the same way before reading anything.
+    command = command.replace("\\\r\n", "").replace("\\\n", "")
     if "$'" in command:
         return "ANSI-C quoting ($'...') can spell any command; write it out literally"
     literal = re.sub(r"[\\'\"]", "", command)
@@ -58,7 +65,7 @@ def problem(command, depth=0):
         tokens = words(command)
     except ValueError:
         # Unparseable shell: refuse only if it could be hiding what we guard.
-        if any(k in command for k in ("terraform", "tofu", "boundary.sh")):
+        if any(k in command.lower() for k in ("terraform", "tofu", "boundary.sh")):
             return "could not parse a command that mentions terraform or boundary.sh"
         return None
     if MENTION.search(literal) and any(t.lower() in INDIRECT for t in tokens):

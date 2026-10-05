@@ -62,6 +62,8 @@ class Guard(unittest.TestCase):
             "$'\\x74erraform' apply",
             "terraform -chdir=$DIR plan",
             "terraform plan -AUTO-APPROVE",
+            "echo a#b; terraform apply",
+            "ter\\\nraform apply",
         ]:
             with self.subTest(cmd=cmd):
                 self.assertEqual(run(cmd), 2)
