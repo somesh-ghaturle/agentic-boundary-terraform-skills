@@ -82,6 +82,10 @@ class Guard(unittest.TestCase):
             "sudo terraform.tfvars destroy",
             "env TF_LOG=1 ./terraform.tfplan apply",
             "cp terraform.real terraform.tf && ./terraform.tf apply",
+            ">log ./terraform.tf apply",
+            "2>/dev/null ./terraform.tfvars apply",
+            "</dev/null ./terraform.hcl destroy",
+            "FOO=1 >out ./terraform.tf apply",
             "terraspace up",
             "terraspace all down",
             "python3 -c 'import pty; pty.spawn([\"scripts/boundary.sh\",\"apply\",\"./infra\",\"dev\"])'",
@@ -111,6 +115,9 @@ class Guard(unittest.TestCase):
             "cp terraform.tfvars.example terraform.tfvars",
             "cat terraform.tfstate",
             "ls terraform.lock.hcl terraform.tfstate.backup",
+            "cat terraform.tfstate > out.json",
+            "ls terraform.lock.hcl 2>/dev/null",
+            "git add terraform.tfvars",
             "terraspace plan",
         ]:
             with self.subTest(cmd=cmd):

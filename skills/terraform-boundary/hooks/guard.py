@@ -65,9 +65,13 @@ TOOL_NAME = re.compile(rf'^({NAMES}){SUFFIX}$', re.I)
 # terraform.lock.hcl. Only Terraform-specific extensions, and never in command position: a
 # binary renamed terraform.tf is still the binary when bash runs it.
 TF_FILE = re.compile(r'\.(tf|tfvars|tfstate|tfplan|hcl)(\.|$)', re.I)
-# Words that run the command after them, so a Terraform name after one is in command position.
-WRAPPERS = {"sudo", "doas", "env", "exec", "command", "builtin", "time", "nohup", "nice", "ionice",
-            "timeout", "stdbuf", "caffeinate", "strace", "chronic", "watch", "ssh"}
+# Commands that only read or move files. A Terraform file name is treated as a file only as an
+# argument to one of these; anywhere else it is assumed to be the binary.
+FILE_COMMANDS = {"cp", "mv", "cat", "ls", "rm", "less", "more", "head", "tail", "grep", "rg", "sed",
+                 "awk", "diff", "touch", "chmod", "stat", "file", "wc", "vi", "vim", "nano", "code",
+                 "git", "tar", "zip", "unzip", "jq", "open", "realpath", "dirname", "basename"}
+# A redirection, as shlex splits it: >, >>, <, <<<, >&, &>, >| ...
+REDIRECT = re.compile(r'^[<>&]*[<>][<>&|]*$')
 OPERATORS = {"&&", "||", ";", "|", "&", "(", ")", "|&", ";;"}
 # Terraform as a word, after the shell removes quotes and backslashes. Not followed by "-" or a
 # word character, so directory names such as terraform-aws are not a mention.
@@ -90,35 +94,48 @@ def mentioned(text):
     return bool(MENTION.search(literal)) or "boundary.sh" in literal.lower()
 
 
-def tool(token, command_position=True):
+def tool(token, file_argument=False):
     """The tool a token names, by basename, case-insensitively, ignoring version or wrapper suffixes.
 
-    As an argument, a Terraform file name (terraform.tfvars) is not the tool. In command position
-    it is, whatever it is called.
+    A Terraform file name (terraform.tfvars) is not the tool only when it is a file argument;
+    anywhere else it is, whatever it is called.
     """
     base = os.path.basename(token)
     m = TOOL_NAME.match(base)
-    if not m or (not command_position and TF_FILE.search(base[len(m.group(1)):])):
+    if not m or (file_argument and TF_FILE.search(base[len(m.group(1)):])):
         return None
     return m.group(1).lower()
 
 
-def command_positions(tokens):
-    """Indexes bash may run as a command: the first word of each simple command, past any
-    VAR=value assignments, and every word after a wrapper such as sudo, env or time."""
-    positions, start, wrapped = set(), True, False
-    for i, tok in enumerate(tokens):
-        if tok in OPERATORS:
-            start, wrapped = True, False
-            continue
-        if start and re.match(r'^[A-Za-z_]\w*=', tok):
-            continue
-        if start or wrapped:
-            positions.add(i)
-            if os.path.basename(tok).lower() in WRAPPERS:
-                wrapped = True
-        start = False
-    return positions
+def file_arguments(tokens):
+    """Indexes that are arguments of a known file command (cp, cat, ls, git, ...).
+
+    For each simple command it finds the command word the way bash does, past VAR=value
+    assignments and redirections such as >log or 2>/dev/null, which bash allows before it.
+    Only when that word is a file command do its arguments count as file arguments. Anything
+    the guard is unsure about stays outside this set, so it is treated as the binary.
+    """
+    found, i, n = set(), 0, len(tokens)
+    while i < n:
+        j, word = i, None
+        while j < n and tokens[j] not in OPERATORS:
+            tok = tokens[j]
+            if word is None:
+                if re.match(r'^[A-Za-z_]\w*=', tok):
+                    j += 1
+                    continue
+                if tok.isdigit() and j + 1 < n and REDIRECT.match(tokens[j + 1]):
+                    j += 1
+                    continue
+                if REDIRECT.match(tok):
+                    j += 2
+                    continue
+                word = j
+            j += 1
+        if word is not None and os.path.basename(tokens[word]).lower() in FILE_COMMANDS:
+            found.update(k for k in range(word + 1, j) if not REDIRECT.match(tokens[k]))
+        i = j + 1
+    return found
 
 
 def words(command):
@@ -150,7 +167,7 @@ def problem(command, depth=0):
     if mentioned(command) and any(os.path.basename(t).lower() in INDIRECT for t in tokens):
         return ("a command that mentions Terraform or boundary.sh must not pass arguments through "
                 "xargs, alias or eval, or drive a terminal with script, expect, tmux or similar")
-    commands = command_positions(tokens)
+    files = file_arguments(tokens)
     for tok in tokens:
         # Terraform or boundary.sh named somewhere other than as a command, a plain path, or a
         # quoted command the guard parses below, e.g. inside perl -e 'system("terraform","apply")'.
@@ -160,7 +177,7 @@ def problem(command, depth=0):
     for i, tok in enumerate(tokens):
         if tok.lower() == "-auto-approve" or tok.lower().startswith("-auto-approve="):
             return "-auto-approve skips the human"
-        name = tool(tok, command_position=i in commands)
+        name = tool(tok, file_argument=i in files)
         if name:
             sub = None
             for nxt in tokens[i + 1:]:
