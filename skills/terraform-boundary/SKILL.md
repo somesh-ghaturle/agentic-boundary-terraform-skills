@@ -9,9 +9,17 @@ The property this skill protects: **the orchestrator can invoke read tools only.
 
 Source of truth: [Agentic-AI-Systems at v0.1.0](https://github.com/somesh-ghaturle/Agentic-AI-Systems/tree/v0.1.0). The script pins that release by tag and commit, so the Terraform never drifts under you. `check` runs the tests, policies and provider-pin checker from a fresh copy of that release, never the copies in the project, so editing them cannot change a verdict. Moving to a newer release means updating this skill.
 
+## The human stays in the loop: three locks
+
+The skill applies Agentic-AI-Systems' own rule to itself. The agent is the orchestrator: it reads, checks and plans. Only a human changes infrastructure.
+
+1. **Claude Code hook:** this plugin's `PreToolUse` hook blocks every `terraform` or `tofu` subcommand outside a read-only list, any `-auto-approve`, and `boundary.sh apply`. Claude Code enforces it, not this text.
+2. **Human-only apply:** `boundary.sh apply` refuses to run without a real terminal. It reruns every gate, snapshots the plan, shows the tool labels and every permission change, and applies that exact snapshot only after the human types its fingerprint. This is the Hermes approval pattern: bound to the exact action and used once.
+3. **Read-only cloud credentials for the agent:** the first two locks read text and check for a terminal, so a determined process could get around them. Cloud credentials cannot be talked around. Tell the user to give the agent's session a read-only identity, such as AWS `ReadOnlyAccess`, GCP Viewer, Azure Reader or a Snowflake role without write grants, and to keep deploy credentials for the human's own terminal. Recommend this every time; it is the lock the other two exist to back up.
+
 ## Hard rules
 
-1. **Never run `terraform apply`**, and never `destroy`. Stop at `plan` and hand it to a human. An agent applying its own infrastructure is the exact failure this skill exists to prevent.
+1. **Never run `terraform apply`**, `destroy` or `boundary.sh apply`, and never try to get around the hook. Stop at `plan` and hand it to a human. An agent applying its own infrastructure is the exact failure this skill exists to prevent.
 2. **Never edit anything under `terraform-<cloud>/tests/` or `.boundary/`** to make a gate pass. A failing gate means the change is wrong. Fix the change, or stop and tell the user which gate failed and why.
 3. **Never widen what the orchestrator can invoke.** No write tool ARN, role, member or grant reaches the orchestrator's identity, directly or through inheritance.
 4. **Never relabel a write tool as `read`**, in `.tf` or in `.tfvars`. Tool declarations, including each tool's `access` label, live in `terraform.tfvars`, which no gate can read. The label is trusted, so only a human can catch a wrong one.
@@ -68,7 +76,7 @@ set -o pipefail; scripts/boundary.sh check <project-dir> 2>&1 | tee <project-dir
 
 `pipefail` matters: without it the pipeline reports `tee`'s success even when a gate failed. A non-zero exit means stop.
 
-Before any gate, `check` refuses symlinks, `.tf.json` files and override files in the tree, because Terraform reads them and the text-based tests do not. The gates then run in order and stop at the first failure:
+`check` copies the tree to a scratch folder first and judges only the copy, so nothing can be swapped in mid-check. It refuses symlinks, `.tf.json` files and override files, because Terraform reads them and the text-based tests do not. It also refuses module or provider sources that are remote, or that leave the tree, unless the pinned release already uses them. The gates then run in order and stop at the first failure:
 
 1. **write boundary:** the pinned release's tests for that tree, which read your `.tf` source and fail on the edits `terraform validate` accepts.
 2. **provider pins:** every provider pins a major, and one tree agrees with itself.
@@ -79,14 +87,15 @@ All four must pass before Step 5. Keep the evidence log; the regulated section b
 
 ## Step 5: plan, then stop
 
-Only if the user asks and has cloud credentials. For `aws`, `azure` and `gcp`, run `terraform-<cloud>/src/build.sh` first, because plan reads the function packages. Then run `terraform -chdir=<project-dir>/terraform-<cloud>/envs/<env> plan -out=tfplan`, show the summary, and stop.
+Only if the user asks and has read-only cloud credentials. For `aws`, `azure` and `gcp`, run `terraform-<cloud>/src/build.sh` first, because plan reads the function packages. Then run `terraform -chdir=<project-dir>/terraform-<cloud>/envs/<env> plan -out=tfplan`, show the summary, and stop.
 
-The gates read source text, so they cannot see `.tfvars` values or anything only known at plan time. Ask the human to confirm two things before they apply:
+Then tell the human to run this in their own terminal, with their own deploy credentials:
 
-1. **Every tool's label:** list each tool and its `access` value from `terraform.tfvars`. On `snowflake`, list which of the read and write tool variables each one sits in. Every tool that changes state must be a write tool.
-2. **The orchestrator's grants in the plan:** its identity policy, invoker bindings or role grants name read tools only.
+```bash
+scripts/boundary.sh apply <project-dir> <env>
+```
 
-Then the human runs apply.
+It shows them what no static gate can see: every tool's `access` label from `terraform.tfvars`, and every permission the plan changes. Every tool that changes state must say `write`, and the orchestrator must gain read tools only. On `snowflake`, tool labels live in `.tf` files, so the gates already check them. The human types the plan's fingerprint to apply, or anything else to stop.
 
 ## Security review
 
