@@ -65,11 +65,12 @@ TOOL_NAME = re.compile(rf'^({NAMES}){SUFFIX}$', re.I)
 # terraform.lock.hcl. Only Terraform-specific extensions, and never in command position: a
 # binary renamed terraform.tf is still the binary when bash runs it.
 TF_FILE = re.compile(r'\.(tf|tfvars|tfstate|tfplan|hcl)(\.|$)', re.I)
-# Commands that only read or move files. A Terraform file name is treated as a file only as an
-# argument to one of these; anywhere else it is assumed to be the binary.
-FILE_COMMANDS = {"cp", "mv", "cat", "ls", "rm", "less", "more", "head", "tail", "grep", "rg", "sed",
-                 "awk", "diff", "touch", "chmod", "stat", "file", "wc", "vi", "vim", "nano", "code",
-                 "git", "tar", "zip", "unzip", "jq", "open", "realpath", "dirname", "basename"}
+# Commands that only read or move files and cannot run anything. A Terraform file name is treated
+# as a file only as an argument to one of these; anywhere else it is assumed to be the binary.
+# Deliberately absent: git (aliases, hooks), sed (e), awk (system), tar (--to-command), zip (-TT),
+# editors and pagers (shell escapes), open (launches programs).
+FILE_COMMANDS = {"cp", "mv", "cat", "ls", "rm", "head", "tail", "grep", "rg", "diff", "touch",
+                 "chmod", "stat", "file", "wc", "realpath", "dirname", "basename"}
 # A redirection, as shlex splits it: >, >>, <, <<<, >&, &>, >| ...
 REDIRECT = re.compile(r'^[<>&]*[<>][<>&|]*$')
 OPERATORS = {"&&", "||", ";", "|", "&", "(", ")", "|&", ";;"}
@@ -167,7 +168,9 @@ def problem(command, depth=0):
     if mentioned(command) and any(os.path.basename(t).lower() in INDIRECT for t in tokens):
         return ("a command that mentions Terraform or boundary.sh must not pass arguments through "
                 "xargs, alias or eval, or drive a terminal with script, expect, tmux or similar")
-    files = file_arguments(tokens)
+    # Bash ends a command at a newline; shlex reads it as a space. Rather than teach the parser
+    # one more rule, a multi-line command gets no file-name exception at all.
+    files = set() if ("\n" in command or "\r" in command) else file_arguments(tokens)
     for tok in tokens:
         # Terraform or boundary.sh named somewhere other than as a command, a plain path, or a
         # quoted command the guard parses below, e.g. inside perl -e 'system("terraform","apply")'.
