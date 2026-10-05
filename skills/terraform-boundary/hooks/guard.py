@@ -61,18 +61,6 @@ NAMES = "terraform|tofu|terragrunt|cdktf|terraspace"
 # terraform-aws and terraformer stay other things.
 SUFFIX = r'(?:[._][\w.-]*|-\d[\w.-]*)?'
 TOOL_NAME = re.compile(rf'^({NAMES}){SUFFIX}$', re.I)
-# Terraform's own files, as arguments, are not the binary: terraform.tfvars, terraform.tfstate.backup,
-# terraform.lock.hcl. Only Terraform-specific extensions, and never in command position: a
-# binary renamed terraform.tf is still the binary when bash runs it.
-TF_FILE = re.compile(r'\.(tf|tfvars|tfstate|tfplan|hcl)(\.|$)', re.I)
-# Commands that only read or move files and cannot run anything. A Terraform file name is treated
-# as a file only as an argument to one of these; anywhere else it is assumed to be the binary.
-# Deliberately absent: git (aliases, hooks), sed (e), awk (system), tar (--to-command), zip (-TT),
-# editors and pagers (shell escapes), open (launches programs).
-FILE_COMMANDS = {"cp", "mv", "cat", "ls", "rm", "head", "tail", "grep", "rg", "diff", "touch",
-                 "chmod", "stat", "file", "wc", "realpath", "dirname", "basename"}
-# A redirection, as shlex splits it: >, >>, <, <<<, >&, &>, >| ...
-REDIRECT = re.compile(r'^[<>&]*[<>][<>&|]*$')
 OPERATORS = {"&&", "||", ";", "|", "&", "(", ")", "|&", ";;"}
 # Terraform as a word, after the shell removes quotes and backslashes. Not followed by "-" or a
 # word character, so directory names such as terraform-aws are not a mention.
@@ -95,48 +83,15 @@ def mentioned(text):
     return bool(MENTION.search(literal)) or "boundary.sh" in literal.lower()
 
 
-def tool(token, file_argument=False):
+def tool(token):
     """The tool a token names, by basename, case-insensitively, ignoring version or wrapper suffixes.
 
-    A Terraform file name (terraform.tfvars) is not the tool only when it is a file argument;
-    anywhere else it is, whatever it is called.
+    Any word that looks like Terraform counts, wherever it appears, terraform.tfvars included.
+    An earlier exception for Terraform file names produced four rounds of bypasses, so it is
+    gone: to read, copy or edit Terraform files the agent uses its file tools, not the shell.
     """
-    base = os.path.basename(token)
-    m = TOOL_NAME.match(base)
-    if not m or (file_argument and TF_FILE.search(base[len(m.group(1)):])):
-        return None
-    return m.group(1).lower()
-
-
-def file_arguments(tokens):
-    """Indexes that are arguments of a known file command (cp, cat, ls, git, ...).
-
-    For each simple command it finds the command word the way bash does, past VAR=value
-    assignments and redirections such as >log or 2>/dev/null, which bash allows before it.
-    Only when that word is a file command do its arguments count as file arguments. Anything
-    the guard is unsure about stays outside this set, so it is treated as the binary.
-    """
-    found, i, n = set(), 0, len(tokens)
-    while i < n:
-        j, word = i, None
-        while j < n and tokens[j] not in OPERATORS:
-            tok = tokens[j]
-            if word is None:
-                if re.match(r'^[A-Za-z_]\w*=', tok):
-                    j += 1
-                    continue
-                if tok.isdigit() and j + 1 < n and REDIRECT.match(tokens[j + 1]):
-                    j += 1
-                    continue
-                if REDIRECT.match(tok):
-                    j += 2
-                    continue
-                word = j
-            j += 1
-        if word is not None and os.path.basename(tokens[word]).lower() in FILE_COMMANDS:
-            found.update(k for k in range(word + 1, j) if not REDIRECT.match(tokens[k]))
-        i = j + 1
-    return found
+    m = TOOL_NAME.match(os.path.basename(token))
+    return m.group(1).lower() if m else None
 
 
 def words(command):
@@ -168,9 +123,6 @@ def problem(command, depth=0):
     if mentioned(command) and any(os.path.basename(t).lower() in INDIRECT for t in tokens):
         return ("a command that mentions Terraform or boundary.sh must not pass arguments through "
                 "xargs, alias or eval, or drive a terminal with script, expect, tmux or similar")
-    # Bash ends a command at a newline; shlex reads it as a space. Rather than teach the parser
-    # one more rule, a multi-line command gets no file-name exception at all.
-    files = set() if ("\n" in command or "\r" in command) else file_arguments(tokens)
     for tok in tokens:
         # Terraform or boundary.sh named somewhere other than as a command, a plain path, or a
         # quoted command the guard parses below, e.g. inside perl -e 'system("terraform","apply")'.
@@ -180,7 +132,7 @@ def problem(command, depth=0):
     for i, tok in enumerate(tokens):
         if tok.lower() == "-auto-approve" or tok.lower().startswith("-auto-approve="):
             return "-auto-approve skips the human"
-        name = tool(tok, file_argument=i in files)
+        name = tool(tok)
         if name:
             sub = None
             for nxt in tokens[i + 1:]:
@@ -260,10 +212,14 @@ def main():
         return 2
     if agent is None:
         return 0
-    why = next(filter(None, (problem(c) for c in commands)), None)
+    try:
+        why = next(filter(None, (problem(c) for c in commands)), None)
+    except Exception as err:  # fail closed here too: a guard that crashed has approved nothing
+        why = f"the guard failed while reading this call ({type(err).__name__}); refusing to guess"
     if why:
         message = (f"Blocked by agentic-boundary: {why}. Run `terraform plan`, then ask the human "
-                   "to run `boundary.sh apply <project-dir> <env>` in their own terminal.")
+                   "to run `boundary.sh apply <project-dir> <env>` in their own terminal. To read, "
+                   "copy or edit Terraform files such as terraform.tfvars, use your file tools, not the shell.")
         print(message, file=sys.stderr)
         if agent == "cursor":
             print(json.dumps({"permission": "deny", "user_message": message, "agent_message": message}))
