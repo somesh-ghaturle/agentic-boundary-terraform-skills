@@ -61,8 +61,13 @@ NAMES = "terraform|tofu|terragrunt|cdktf|terraspace"
 # terraform-aws and terraformer stay other things.
 SUFFIX = r'(?:[._][\w.-]*|-\d[\w.-]*)?'
 TOOL_NAME = re.compile(rf'^({NAMES}){SUFFIX}$', re.I)
-# Terraform's own files are not the binary: terraform.tfvars, terraform.tfstate.backup, ...
-TF_FILE = re.compile(r'\.(tf|tfvars|tfstate|tfplan|hcl|json|example|backup|md|txt|log|ya?ml|sh|py)(\.|$)', re.I)
+# Terraform's own files, as arguments, are not the binary: terraform.tfvars, terraform.tfstate.backup,
+# terraform.lock.hcl. Only Terraform-specific extensions, and never in command position: a
+# binary renamed terraform.tf is still the binary when bash runs it.
+TF_FILE = re.compile(r'\.(tf|tfvars|tfstate|tfplan|hcl)(\.|$)', re.I)
+# Words that run the command after them, so a Terraform name after one is in command position.
+WRAPPERS = {"sudo", "doas", "env", "exec", "command", "builtin", "time", "nohup", "nice", "ionice",
+            "timeout", "stdbuf", "caffeinate", "strace", "chronic", "watch", "ssh"}
 OPERATORS = {"&&", "||", ";", "|", "&", "(", ")", "|&", ";;"}
 # Terraform as a word, after the shell removes quotes and backslashes. Not followed by "-" or a
 # word character, so directory names such as terraform-aws are not a mention.
@@ -85,13 +90,35 @@ def mentioned(text):
     return bool(MENTION.search(literal)) or "boundary.sh" in literal.lower()
 
 
-def tool(token):
-    """The tool a token names, by basename, case-insensitively, ignoring version or wrapper suffixes."""
+def tool(token, command_position=True):
+    """The tool a token names, by basename, case-insensitively, ignoring version or wrapper suffixes.
+
+    As an argument, a Terraform file name (terraform.tfvars) is not the tool. In command position
+    it is, whatever it is called.
+    """
     base = os.path.basename(token)
     m = TOOL_NAME.match(base)
-    if not m or TF_FILE.search(base[len(m.group(1)):]):
+    if not m or (not command_position and TF_FILE.search(base[len(m.group(1)):])):
         return None
     return m.group(1).lower()
+
+
+def command_positions(tokens):
+    """Indexes bash may run as a command: the first word of each simple command, past any
+    VAR=value assignments, and every word after a wrapper such as sudo, env or time."""
+    positions, start, wrapped = set(), True, False
+    for i, tok in enumerate(tokens):
+        if tok in OPERATORS:
+            start, wrapped = True, False
+            continue
+        if start and re.match(r'^[A-Za-z_]\w*=', tok):
+            continue
+        if start or wrapped:
+            positions.add(i)
+            if os.path.basename(tok).lower() in WRAPPERS:
+                wrapped = True
+        start = False
+    return positions
 
 
 def words(command):
@@ -123,6 +150,7 @@ def problem(command, depth=0):
     if mentioned(command) and any(os.path.basename(t).lower() in INDIRECT for t in tokens):
         return ("a command that mentions Terraform or boundary.sh must not pass arguments through "
                 "xargs, alias or eval, or drive a terminal with script, expect, tmux or similar")
+    commands = command_positions(tokens)
     for tok in tokens:
         # Terraform or boundary.sh named somewhere other than as a command, a plain path, or a
         # quoted command the guard parses below, e.g. inside perl -e 'system("terraform","apply")'.
@@ -132,7 +160,7 @@ def problem(command, depth=0):
     for i, tok in enumerate(tokens):
         if tok.lower() == "-auto-approve" or tok.lower().startswith("-auto-approve="):
             return "-auto-approve skips the human"
-        name = tool(tok)
+        name = tool(tok, command_position=i in commands)
         if name:
             sub = None
             for nxt in tokens[i + 1:]:
