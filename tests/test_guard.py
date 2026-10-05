@@ -70,6 +70,10 @@ class Guard(unittest.TestCase):
             "cdktf destroy",
             "perl -e 'system(\"terraform\",\"apply\")'",
             "terraform.exe apply",
+            "terraform_1.15.8 apply",
+            "~/.local/bin/terraform-1.15 apply",
+            "terraspace up",
+            "terraspace all down",
             "ter\\\nraform apply",
         ]:
             with self.subTest(cmd=cmd):
@@ -89,6 +93,8 @@ class Guard(unittest.TestCase):
             "ls infra/terraform/envs",
             "terraform -chdir=infra/terraform/envs/dev plan",
             'bash -lc "cd infra && terraform plan"',
+            "terraform-docs markdown .",
+            "terraspace plan",
         ]:
             with self.subTest(cmd=cmd):
                 self.assertEqual(run(cmd), 0)
@@ -100,6 +106,30 @@ class Guard(unittest.TestCase):
 def raw(event):
     proc = subprocess.run([sys.executable, str(GUARD)], input=json.dumps(event), capture_output=True, text=True)
     return proc.returncode, proc.stdout
+
+
+class McpTools(unittest.TestCase):
+    """An MCP tool that runs commands is a second shell; every agent's MCP hook is checked."""
+
+    def test_claude_and_codex(self):
+        self.assertEqual(raw({"tool_name": "mcp__shell__run", "tool_input": {"cmd": "terraform apply -input=false"}})[0], 2)
+        self.assertEqual(raw({"tool_name": "mcp__shell__run", "tool_input": {"args": {"line": ["cd x", "terragrunt apply"]}}})[0], 2)
+        self.assertEqual(raw({"tool_name": "mcp__github__create_issue", "tool_input": {"title": "Review the plan"}})[0], 0)
+
+    def test_windsurf(self):
+        event = lambda args: {"agent_action_name": "pre_mcp_tool_use",
+                              "tool_info": {"mcp_server_name": "shell", "mcp_tool_name": "run", "mcp_tool_arguments": args}}
+        self.assertEqual(raw(event({"command": "terraform destroy"}))[0], 2)
+        self.assertEqual(raw(event({"command": "ls"}))[0], 0)
+
+    def test_cursor_denies_asks_or_steps_aside(self):
+        event = lambda args: {"tool_name": "run", "tool_input": json.dumps(args), "mcp_server_name": "shell"}
+        code, out = raw(event({"command": "terraform apply"}))
+        self.assertEqual((code, json.loads(out)["permission"]), (2, "deny"))
+        code, out = raw(event({"command": "terraform plan"}))
+        self.assertEqual((code, json.loads(out)["permission"]), (0, "ask"))
+        # Unrelated: exit 1 means Cursor's normal flow, never an automatic allow.
+        self.assertEqual(raw(event({"query": "list issues"})), (1, ""))
 
 
 class OtherAgents(unittest.TestCase):

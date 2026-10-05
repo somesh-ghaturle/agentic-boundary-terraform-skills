@@ -7,7 +7,8 @@ Claude Code users install the plugin instead (see README). For the other three a
 
   1. copies skills/terraform-boundary to ~/.agents/skills/terraform-boundary, which Codex,
      Cursor and Windsurf all load skills from;
-  2. adds the guard to that agent's user-level hook config, keeping any hooks already there.
+  2. adds the guard to that agent's user-level hook config, for shell commands and MCP tool
+     calls, keeping any hooks already there.
 
 User level, on purpose. A hook config inside a project is a file the agent edits like any
 other; one in your home directory is outside the project it works on. Running this twice
@@ -37,24 +38,33 @@ def cursor_matcher():
     def spelled(word):
         return gap.join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else "\\" + c if c == "." else c
                         for c in word)
-    words = ["terraform", "tofu", "terragrunt", "cdktf", "boundary.sh", "auto-approve"]
+    words = ["terraform", "tofu", "terragrunt", "cdktf", "terraspace", "boundary.sh", "auto-approve"]
     return "|".join([spelled(w) for w in words] + [r"\$'"])
 
 
 def hook_target(agent, home, guard):
-    """(config path, event name, hook entry, wrapper) for one agent."""
+    """(config path, [(event, hook entry), ...], wrapper) for one agent: shell and MCP."""
     command = f'python3 "{guard}"'
     if agent == "codex":
         codex_home = pathlib.Path(os.environ.get("CODEX_HOME") or home / ".codex")
-        entry = {"matcher": "^Bash$", "hooks": [{"type": "command", "command": command}]}
-        return codex_home / "hooks.json", "PreToolUse", entry, {}
+        hook = [{"type": "command", "command": command}]
+        return codex_home / "hooks.json", [
+            ("PreToolUse", {"matcher": "^Bash$", "hooks": hook}),
+            ("PreToolUse", {"matcher": "^mcp__", "hooks": hook}),
+        ], {}
     if agent == "cursor":
-        # Fires on every spelling the guard reacts to, and blocks if the guard crashes or hangs.
-        entry = {"command": command, "matcher": cursor_matcher(), "failClosed": True}
-        return home / ".cursor" / "hooks.json", "beforeShellExecution", entry, {"version": 1}
+        return home / ".cursor" / "hooks.json", [
+            # Fires on every spelling the guard reacts to, and blocks if the guard crashes or hangs.
+            ("beforeShellExecution", {"command": command, "matcher": cursor_matcher(), "failClosed": True}),
+            # No matcher exists for MCP. Not failClosed, because the guard steps aside on
+            # unrelated MCP calls by exiting 1 ("hook failed, action proceeds").
+            ("beforeMCPExecution", {"command": command}),
+        ], {"version": 1}
     if agent == "windsurf":
-        entry = {"command": command, "show_output": True}
-        return home / ".codeium" / "windsurf" / "hooks.json", "pre_run_command", entry, {}
+        return home / ".codeium" / "windsurf" / "hooks.json", [
+            ("pre_run_command", {"command": command, "show_output": True}),
+            ("pre_mcp_tool_use", {"command": command, "show_output": True}),
+        ], {}
     sys.exit("usage: python3 install.py <codex|cursor|windsurf>")
 
 
@@ -66,7 +76,7 @@ def install(agent, home):
     home = pathlib.Path(home)
     dest = home / ".agents" / "skills" / "terraform-boundary"
     guard = dest / "hooks" / "guard.py"
-    config, event, entry, wrapper = hook_target(agent, home, guard)
+    config, entries, wrapper = hook_target(agent, home, guard)
 
     if dest.exists():
         shutil.rmtree(dest)
@@ -74,16 +84,21 @@ def install(agent, home):
     print(f"skill  -> {dest}")
 
     data = json.loads(config.read_text()) if config.exists() else dict(wrapper)
-    hooks = data.setdefault("hooks", {}).setdefault(event, [])
-    if any(mentions_guard(e, guard) for e in hooks):
+    added = []
+    for event, entry in entries:
+        hooks = data.setdefault("hooks", {}).setdefault(event, [])
+        if any(mentions_guard(e, guard) and e.get("matcher") == entry.get("matcher") for e in hooks):
+            continue
+        hooks.append(entry)
+        added.append(event + (f" {entry['matcher']}" if "matcher" in entry and len(entry["matcher"]) < 20 else ""))
+    if not added:
         print(f"guard  already in {config}")
         return
     if config.exists():
         shutil.copy2(config, config.with_name(config.name + ".bak"))
-    hooks.append(entry)
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(json.dumps(data, indent=2) + "\n")
-    print(f"guard  -> {config} ({event})")
+    print(f"guard  -> {config} ({', '.join(added)})")
 
 
 if __name__ == "__main__":

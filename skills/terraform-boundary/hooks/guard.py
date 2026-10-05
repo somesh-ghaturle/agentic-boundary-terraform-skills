@@ -10,9 +10,14 @@ command the agent issues, and each blocks on exit code 2:
   Windsurf     pre_run_command hook       {"agent_action_name": "pre_run_command",
                                            "tool_info": {"command_line": ...}}
 
+MCP tools can run commands too, so their calls are checked as well: Claude Code and Codex
+PreToolUse for mcp__* tools, Cursor beforeMCPExecution, Windsurf pre_mcp_tool_use. Every string
+argument is read as a command. A message that merely quotes `terraform apply` is denied too.
+
 It blocks anything that would change real infrastructure:
 
-  - terraform, tofu, or a wrapper that runs them (terragrunt, cdktf), with any subcommand
+  - terraform, tofu, or a wrapper that runs them (terragrunt, cdktf, terraspace), under any
+    name, versioned binaries such as terraform_1.15.8 included, with any subcommand
     outside a read-only allowlist (apply, destroy, deploy, import, state, taint, workspace,
     test, ... are all blocked)
   - Terraform named inside other code, such as perl -e 'system("terraform","apply")', where the
@@ -41,13 +46,19 @@ TOOLS = {
     "tofu": READ_ONLY,
     "terragrunt": READ_ONLY | {"hclfmt", "render-json", "validate-inputs", "graph-dependencies"},
     "cdktf": {"synth", "diff", "get", "list", "output", "init", "convert", "provider", "help"},
+    "terraspace": {"plan", "validate", "fmt", "show", "list", "info", "build", "init", "new", "setup", "check"},
 }
-# terragrunt run-all <cmd>, terragrunt run [--all] [--] <cmd>: the real subcommand comes next.
-PASS_THROUGH = {"run-all", "run"}
+# terragrunt run-all <cmd>, terragrunt run [--all] [--] <cmd>, terraspace all <cmd>: the real
+# subcommand comes next.
+PASS_THROUGH = {"terragrunt": {"run-all", "run"}, "terraspace": {"all"}}
+NAMES = "terraform|tofu|terragrunt|cdktf|terraspace"
+# A tool's name, optionally with a version a version manager or a download added, and .exe.
+# Only a digit-led suffix counts, so terraform-docs and terraform-aws are other things.
+TOOL_NAME = re.compile(rf'^({NAMES})(?:[-_.]?v?\d[\w.]*)?(?:\.exe)?$', re.I)
 OPERATORS = {"&&", "||", ";", "|", "&", "(", ")", "|&", ";;"}
 # Terraform as a word, after the shell removes quotes and backslashes. Not followed by "-" or a
 # word character, so directory names such as terraform-aws are not a mention.
-MENTION = re.compile(r'(?<![\w-])(terraform|tofu|terragrunt|cdktf)(?![\w-])', re.I)
+MENTION = re.compile(rf'(?<![\w-])({NAMES})(?:[-_.]?v?\d[\w.]*)?(?![\w-])', re.I)
 # A token that can only be a path or a flag value, never code that runs something.
 PLAIN = re.compile(r'^[\w./=:@+-]+$')
 EXPANSION = set("$`{}*?[]")
@@ -55,11 +66,9 @@ INDIRECT = {"xargs", "parallel", "alias", "eval", "source", ".", "function"}
 
 
 def tool(token):
-    """The tool a token names, by basename, case-insensitively, with any .exe dropped."""
-    base = os.path.basename(token).lower()
-    if base.endswith(".exe"):
-        base = base[:-4]
-    return base if base in TOOLS else None
+    """The tool a token names, by basename, case-insensitively, ignoring a version and .exe."""
+    m = TOOL_NAME.match(os.path.basename(token))
+    return m.group(1).lower() if m else None
 
 
 def words(command):
@@ -108,7 +117,7 @@ def problem(command, depth=0):
                     break
                 if nxt.startswith("-"):
                     continue
-                if sub is None and name == "terragrunt" and nxt.lower() in PASS_THROUGH:
+                if sub is None and nxt.lower() in PASS_THROUGH.get(name, ()):
                     continue
                 sub = nxt
                 break
@@ -124,27 +133,53 @@ def problem(command, depth=0):
     return None
 
 
+def strings(value):
+    """Every string inside an MCP tool's arguments, however deeply nested."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from strings(v)
+
+
 def extract(event):
-    """(agent, command) for the four payload shapes, or (None, None) when it is not a shell call."""
-    if event.get("agent_action_name") == "pre_run_command":              # Windsurf
-        return "windsurf", str((event.get("tool_info") or {}).get("command_line", ""))
+    """(agent, kind, commands) for each payload shape; agent is None when there is nothing to check."""
+    action = event.get("agent_action_name")
+    info = event.get("tool_info") or {}
+    if action == "pre_run_command":                                      # Windsurf shell
+        return "windsurf", "shell", [str(info.get("command_line", ""))]
+    if action == "pre_mcp_tool_use":                                     # Windsurf MCP
+        return "windsurf", "mcp", list(strings(info.get("mcp_tool_arguments")))
+    if "mcp_server_name" in event:                                       # Cursor MCP
+        raw = event.get("tool_input", "")
+        try:
+            args = json.loads(raw) if isinstance(raw, str) else raw
+        except ValueError:
+            args = raw
+        return "cursor", "mcp", list(strings(args))
     if "tool_name" in event:                                             # Claude Code, Codex
-        if event.get("tool_name") != "Bash":
-            return None, None
+        name = str(event.get("tool_name"))
+        if name.startswith("mcp__"):
+            return "claude-or-codex", "mcp", list(strings(event.get("tool_input")))
+        if name != "Bash":
+            return None, None, []
         command = (event.get("tool_input") or {}).get("command", "")
         if isinstance(command, list):
             command = shlex.join(str(part) for part in command)
-        return "claude-or-codex", str(command)
-    if "command" in event:                                               # Cursor
-        return "cursor", str(event["command"])
-    return None, None
+        return "claude-or-codex", "shell", [str(command)]
+    if "command" in event:                                               # Cursor shell
+        return "cursor", "shell", [str(event["command"])]
+    return None, None, []
 
 
 def main():
-    agent, command = extract(json.load(sys.stdin))
+    agent, kind, commands = extract(json.load(sys.stdin))
     if agent is None:
         return 0
-    why = problem(command)
+    why = next(filter(None, (problem(c) for c in commands)), None)
     if why:
         message = (f"Blocked by agentic-boundary: {why}. Run `terraform plan`, then ask the human "
                    "to run `boundary.sh apply <project-dir> <env>` in their own terminal.")
@@ -153,11 +188,16 @@ def main():
             print(json.dumps({"permission": "deny", "user_message": message, "agent_message": message}))
         return 2
     if agent == "cursor":
-        # Cursor needs a decision on exit 0. Its hook only fires on Terraform-related commands,
-        # and "allow" would skip the human's own approval, so the answer is "ask": the human
-        # confirms every Terraform command the agent runs, even read-only ones.
+        mentioned = any(MENTION.search(re.sub(r"[\\'\"]", "", c)) for c in commands)
+        if kind == "mcp" and not mentioned:
+            # Cursor needs a decision on exit 0 and its MCP hook has no matcher. "allow" would
+            # skip the human's own MCP approval, so the guard steps aside instead: any exit code
+            # other than 0 or 2 means "hook failed, action proceeds" through Cursor's normal flow.
+            return 1
+        # The shell hook only fires on Terraform-related commands. "allow" would skip the
+        # human's own approval, so the answer is "ask": the human confirms each one.
         print(json.dumps({"permission": "ask",
-                          "user_message": f"agentic-boundary: review this Terraform command before it runs: {command}"}))
+                          "user_message": f"agentic-boundary: review this Terraform-related call before it runs: {commands[0][:200]}"}))
     return 0
 
 

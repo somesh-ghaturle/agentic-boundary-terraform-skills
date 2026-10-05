@@ -33,11 +33,11 @@ python3 install.py codex      # or: cursor, windsurf
 
 `install.py` copies the skill to `~/.agents/skills/terraform-boundary`, which all three load skills from, and adds the guard to that agent's user-level hooks:
 
-| Agent | Hook file | Hook event | Behaviour |
+| Agent | Hook file | Hook events | Behaviour |
 | --- | --- | --- | --- |
-| Codex | `~/.codex/hooks.json` | `PreToolUse` | Blocks state-changing Terraform commands |
-| Cursor | `~/.cursor/hooks.json` | `beforeShellExecution` | Blocks them, asks you to confirm every other Terraform command, and fails closed |
-| Windsurf | `~/.codeium/windsurf/hooks.json` | `pre_run_command` | Blocks state-changing Terraform commands |
+| Codex | `~/.codex/hooks.json` | `PreToolUse` for `Bash` and `mcp__*` | Blocks state-changing Terraform commands, from the shell or an MCP tool |
+| Cursor | `~/.cursor/hooks.json` | `beforeShellExecution`, `beforeMCPExecution` | Blocks them, and asks you to confirm every other Terraform-related call. The shell hook fails closed. On unrelated MCP calls the guard steps aside with exit code 1, which Cursor logs as a hook failure and lets through its normal approval flow, so nothing is ever auto-approved |
+| Windsurf | `~/.codeium/windsurf/hooks.json` | `pre_run_command`, `pre_mcp_tool_use` | Blocks state-changing Terraform commands, from the shell or an MCP tool |
 
 It keeps any hooks you already have, backs up the file it changes, and does nothing the second time. It installs at user level on purpose: a hook file inside a project is one the agent can edit.
 
@@ -68,7 +68,7 @@ The agent can read, check and plan. Only you can change infrastructure, and thre
 
 | Lock | Where | What it stops |
 | --- | --- | --- |
-| Agent hook | `skills/terraform-boundary/hooks/guard.py` | The agent running `terraform apply`, `destroy`, `-auto-approve` or `boundary.sh apply`, directly or through `terragrunt` or `cdktf`, in Claude Code, Codex, Cursor or Windsurf |
+| Agent hook | `skills/terraform-boundary/hooks/guard.py` | The agent running `terraform apply`, `destroy`, `-auto-approve` or `boundary.sh apply`, directly, through `terragrunt`, `cdktf` or `terraspace`, or through an MCP tool, in Claude Code, Codex, Cursor or Windsurf |
 | Human-only apply | `boundary.sh apply` | Applying without a terminal, applying anything but a fresh plan of the gated copy, or applying a plan whose fingerprint you did not type. Your credentials never run the agent's plan file or provider binaries |
 | Read-only credentials | Your cloud account | Everything else. Give the agent's session a read-only identity and keep deploy credentials for your own terminal |
 
@@ -84,7 +84,7 @@ The skill works through the [governance](https://github.com/somesh-ghaturle/Agen
 
 ## Status
 
-Version 1.4.3. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
+Version 1.4.4. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
 
 Two test files prove it:
 
@@ -97,7 +97,7 @@ The gate trusts nothing in your project except the Terraform it judges. Its test
 
 ## Limits
 
-The gates read Terraform source as text. They run `terraform fmt` on a copy first, so spacing and label quoting match what the tests expect, and they refuse symlinks, `.tf.json` files, override files and `/* */` block comments, because Terraform reads or ignores those differently from the tests. They also refuse remote module sources, provisioners, external data sources and any state backend except an empty local one. Remote state is not supported by `boundary.sh apply` yet. They cannot see values in `.tfvars`, including whether each tool is labelled `read` or `write`, or anything only known at plan time. That is why `boundary.sh apply` puts both in front of you before you type the fingerprint. The guard denies any command that mentions Terraform and also uses shell expansion or indirection, and compares names case-insensitively, but a script, a variable or code that builds the name at runtime is invisible to it in every agent. The hook and the terminal check read text, so read-only credentials for the agent are the lock that holds when everything else is tricked.
+The gates read Terraform source as text. They run `terraform fmt` on a copy first, so spacing and label quoting match what the tests expect, and they refuse symlinks, `.tf.json` files, override files and `/* */` block comments, because Terraform reads or ignores those differently from the tests. They also refuse remote module sources, provisioners, external data sources and any state backend except an empty local one. Remote state is not supported by `boundary.sh apply` yet. They cannot see values in `.tfvars`, including whether each tool is labelled `read` or `write`, or anything only known at plan time. That is why `boundary.sh apply` puts both in front of you before you type the fingerprint. The guard denies any command that mentions Terraform and also uses shell expansion or indirection, and compares names case-insensitively, but a script, a variable or code that builds the name at runtime is invisible to it in every agent. MCP calls are checked by reading every string argument as a command, so a message that merely quotes `terraform apply` is denied too. The hook and the terminal check read text, so read-only credentials for the agent are the lock that holds when everything else is tricked.
 
 ## License
 

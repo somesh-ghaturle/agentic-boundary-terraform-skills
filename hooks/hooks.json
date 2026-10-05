@@ -1,9 +1,18 @@
 {
-  "description": "Block the agent from changing infrastructure; only a human applies.",
+  "description": "Block the agent from changing infrastructure through the shell or an MCP tool; only a human applies.",
   "hooks": {
     "PreToolUse": [
       {
         "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/terraform-boundary/hooks/guard.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__",
         "hooks": [
           {
             "type": "command",

@@ -39,6 +39,12 @@ class Install(unittest.TestCase):
                 self.assertTrue(self.guard.is_file())
                 self.assertIn(str(self.guard), json.dumps(self.config(path)["hooks"][event]))
 
+    def test_mcp_tool_calls_are_guarded_in_every_agent(self):
+        install("cursor", self.home)
+        install("windsurf", self.home)
+        self.assertIn(str(self.guard), json.dumps(self.config(".cursor/hooks.json")["hooks"]["beforeMCPExecution"]))
+        self.assertIn(str(self.guard), json.dumps(self.config(".codeium/windsurf/hooks.json")["hooks"]["pre_mcp_tool_use"]))
+
     def test_cursor_hook_fails_closed(self):
         install("cursor", self.home)
         entry = self.config(".cursor/hooks.json")["hooks"]["beforeShellExecution"][0]
@@ -51,7 +57,8 @@ class Install(unittest.TestCase):
         install("cursor", self.home)
         matcher = re.compile(self.config(".cursor/hooks.json")["hooks"]["beforeShellExecution"][0]["matcher"])
         for cmd in ["terraform apply", "TERRAFORM apply", '"terra""form" apply', "t\\erraform apply",
-                    "{terraform,apply}", "tofu apply", "terragrunt apply", "cdktf deploy", "scripts/boundary.sh apply . dev",
+                    "{terraform,apply}", "tofu apply", "terragrunt apply", "cdktf deploy", "terraspace up",
+                    "terraform_1.15.8 apply", "scripts/boundary.sh apply . dev",
                     "terraform plan -auto-approve", "$'\\x74erraform' apply", "ter\\\nraform apply"]:
             with self.subTest(cmd=cmd):
                 self.assertIsNotNone(matcher.search(cmd))
@@ -64,8 +71,9 @@ class Install(unittest.TestCase):
         install("codex", self.home)
         install("codex", self.home)
         hooks = self.config(".codex/hooks.json")["hooks"]["PreToolUse"]
-        self.assertEqual(len(hooks), 2)
+        self.assertEqual(len(hooks), 3)  # yours, the guard on the shell, the guard on MCP tools
         self.assertIn("mine.sh", json.dumps(hooks[0]))
+        self.assertEqual([h["matcher"] for h in hooks[1:]], ["^Bash$", "^mcp__"])
         self.assertTrue((self.home / ".codex/hooks.json.bak").is_file())
 
     def test_unknown_agent_is_refused(self):
