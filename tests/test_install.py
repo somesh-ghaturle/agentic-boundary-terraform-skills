@@ -51,7 +51,7 @@ class Install(unittest.TestCase):
         install("cursor", self.home)
         matcher = re.compile(self.config(".cursor/hooks.json")["hooks"]["beforeShellExecution"][0]["matcher"])
         for cmd in ["terraform apply", "TERRAFORM apply", '"terra""form" apply', "t\\erraform apply",
-                    "{terraform,apply}", "tofu apply", "scripts/boundary.sh apply . dev",
+                    "{terraform,apply}", "tofu apply", "terragrunt apply", "cdktf deploy", "scripts/boundary.sh apply . dev",
                     "terraform plan -auto-approve", "$'\\x74erraform' apply", "ter\\\nraform apply"]:
             with self.subTest(cmd=cmd):
                 self.assertIsNotNone(matcher.search(cmd))

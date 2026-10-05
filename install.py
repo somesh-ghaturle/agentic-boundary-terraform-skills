@@ -37,7 +37,7 @@ def cursor_matcher():
     def spelled(word):
         return gap.join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else "\\" + c if c == "." else c
                         for c in word)
-    words = ["terraform", "tofu", "boundary.sh", "auto-approve"]
+    words = ["terraform", "tofu", "terragrunt", "cdktf", "boundary.sh", "auto-approve"]
     return "|".join([spelled(w) for w in words] + [r"\$'"])
 
 

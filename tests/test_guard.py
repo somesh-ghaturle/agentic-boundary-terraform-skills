@@ -63,6 +63,13 @@ class Guard(unittest.TestCase):
             "terraform -chdir=$DIR plan",
             "terraform plan -AUTO-APPROVE",
             "echo a#b; terraform apply",
+            "terragrunt apply",
+            "terragrunt run-all apply",
+            "terragrunt run --all -- destroy",
+            "cdktf deploy",
+            "cdktf destroy",
+            "perl -e 'system(\"terraform\",\"apply\")'",
+            "terraform.exe apply",
             "ter\\\nraform apply",
         ]:
             with self.subTest(cmd=cmd):
@@ -75,6 +82,13 @@ class Guard(unittest.TestCase):
             "ls terraform-gcp/envs",
             "set -o pipefail; scripts/boundary.sh check ./infra 2>&1 | tee ./infra/.boundary/evidence-$(date +%F).log",
             "scripts/boundary.sh fetch aws ./infra",
+            "terragrunt plan",
+            "terragrunt run-all plan",
+            "cdktf synth",
+            "cdktf diff",
+            "ls infra/terraform/envs",
+            "terraform -chdir=infra/terraform/envs/dev plan",
+            'bash -lc "cd infra && terraform plan"',
         ]:
             with self.subTest(cmd=cmd):
                 self.assertEqual(run(cmd), 0)

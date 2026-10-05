@@ -12,8 +12,11 @@ command the agent issues, and each blocks on exit code 2:
 
 It blocks anything that would change real infrastructure:
 
-  - terraform or tofu with any subcommand outside a read-only allowlist (apply, destroy,
-    import, state, taint, workspace, test, ... are all blocked)
+  - terraform, tofu, or a wrapper that runs them (terragrunt, cdktf), with any subcommand
+    outside a read-only allowlist (apply, destroy, deploy, import, state, taint, workspace,
+    test, ... are all blocked)
+  - Terraform named inside other code, such as perl -e 'system("terraform","apply")', where the
+    guard cannot see what will run
   - -auto-approve anywhere
   - boundary.sh apply, the human-only step
 
@@ -31,14 +34,32 @@ import re
 import shlex
 import sys
 
-TERRAFORM = {"terraform", "tofu"}
 READ_ONLY = {"init", "validate", "plan", "fmt", "show", "version", "providers", "output", "graph", "get"}
+# Each tool that can change infrastructure, and the subcommands that cannot.
+TOOLS = {
+    "terraform": READ_ONLY,
+    "tofu": READ_ONLY,
+    "terragrunt": READ_ONLY | {"hclfmt", "render-json", "validate-inputs", "graph-dependencies"},
+    "cdktf": {"synth", "diff", "get", "list", "output", "init", "convert", "provider", "help"},
+}
+# terragrunt run-all <cmd>, terragrunt run [--all] [--] <cmd>: the real subcommand comes next.
+PASS_THROUGH = {"run-all", "run"}
 OPERATORS = {"&&", "||", ";", "|", "&", "(", ")", "|&", ";;"}
 # Terraform as a word, after the shell removes quotes and backslashes. Not followed by "-" or a
 # word character, so directory names such as terraform-aws are not a mention.
-MENTION = re.compile(r'(?<![\w-])(terraform|tofu)(?![\w-])', re.I)
+MENTION = re.compile(r'(?<![\w-])(terraform|tofu|terragrunt|cdktf)(?![\w-])', re.I)
+# A token that can only be a path or a flag value, never code that runs something.
+PLAIN = re.compile(r'^[\w./=:@+-]+$')
 EXPANSION = set("$`{}*?[]")
 INDIRECT = {"xargs", "parallel", "alias", "eval", "source", ".", "function"}
+
+
+def tool(token):
+    """The tool a token names, by basename, case-insensitively, with any .exe dropped."""
+    base = os.path.basename(token).lower()
+    if base.endswith(".exe"):
+        base = base[:-4]
+    return base if base in TOOLS else None
 
 
 def words(command):
@@ -70,21 +91,30 @@ def problem(command, depth=0):
         return None
     if MENTION.search(literal) and any(t.lower() in INDIRECT for t in tokens):
         return "a command that mentions Terraform must not pass arguments through xargs, alias or eval"
+    for tok in tokens:
+        # Terraform named somewhere other than as a command, a plain path, or a quoted command
+        # the guard parses below, e.g. inside perl -e 'system("terraform","apply")'.
+        if (MENTION.search(re.sub(r"[\\'\"]", "", tok)) and tool(tok) is None
+                and not PLAIN.match(tok) and not any(c.isspace() for c in tok)):
+            return f"`{tok}` names Terraform inside other code; run the command directly so it can be checked"
     for i, tok in enumerate(tokens):
         if tok.lower() == "-auto-approve" or tok.lower().startswith("-auto-approve="):
             return "-auto-approve skips the human"
-        base = os.path.basename(tok).lower()
-        if base in TERRAFORM:
+        name = tool(tok)
+        if name:
             sub = None
             for nxt in tokens[i + 1:]:
                 if nxt in OPERATORS:
                     break
-                if not nxt.startswith("-"):
-                    sub = nxt
-                    break
-            if sub is not None and sub.lower() not in READ_ONLY:
-                return f"`{base} {sub}` changes infrastructure; only a human may run it"
-        if base == "boundary.sh" and i + 1 < len(tokens) and tokens[i + 1] == "apply":
+                if nxt.startswith("-"):
+                    continue
+                if sub is None and name == "terragrunt" and nxt.lower() in PASS_THROUGH:
+                    continue
+                sub = nxt
+                break
+            if sub is not None and sub.lower() not in TOOLS[name]:
+                return f"`{name} {sub}` changes infrastructure; only a human may run it"
+        if os.path.basename(tok).lower() == "boundary.sh" and i + 1 < len(tokens) and tokens[i + 1] == "apply":
             return "boundary.sh apply is the human-only step"
         # Commands nested in strings: sh -c "terraform apply", eval "...".
         if depth < 3 and any(c.isspace() for c in tok):
