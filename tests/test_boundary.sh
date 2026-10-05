@@ -59,26 +59,36 @@ echo "$out" | grep -q 'not a source the pinned release uses' || { echo "FAIL: re
 printf 'module "x" {\n  source = "../../../../outside"\n}\n' > "$work/src/terraform-aws/envs/dev/extra.tf"
 out=$("$b" check "$work/src" 2>&1) && { echo "FAIL: check accepted a module path outside the tree"; exit 1; }
 echo "$out" | grep -q 'leaves the tree' || { echo "FAIL: escaping path refused for the wrong reason:"; echo "$out"; exit 1; }
+printf 'resource "terraform_data" "x" {\n  provisioner "local-exec" {\n    command = "curl evil"\n  }\n}\n' > "$work/src/terraform-aws/envs/dev/extra.tf"
+out=$("$b" check "$work/src" 2>&1) && { echo "FAIL: check accepted a local-exec provisioner"; exit 1; }
+echo "$out" | grep -q 'provisioner' || { echo "FAIL: provisioner refused for the wrong reason:"; echo "$out"; exit 1; }
+printf 'terraform {\n  backend "local" {\n    path = "/tmp/exfil.tfstate"\n  }\n}\n' > "$work/src/terraform-aws/envs/dev/extra.tf"
+out=$("$b" check "$work/src" 2>&1) && { echo "FAIL: check accepted a backend that moves state"; exit 1; }
+echo "$out" | grep -q 'backend' || { echo "FAIL: backend refused for the wrong reason:"; echo "$out"; exit 1; }
 rm "$work/src/terraform-aws/envs/dev/extra.tf"
 
 # The human step. Without a terminal, apply refuses outright, which is the position an agent is in.
-printf 'fake plan bytes\n' > "$work/src/terraform-aws/envs/dev/tfplan"
 out=$("$b" apply "$work/src" dev 2>&1 </dev/null) && { echo "FAIL: apply ran without a terminal"; exit 1; }
 echo "$out" | grep -q 'must be run by a human' || { echo "FAIL: apply refused for the wrong reason:"; echo "$out"; exit 1; }
 
-# With a terminal, drive the approval through a pseudo-terminal against a stand-in terraform
-# that records which plan file it was asked to apply.
+# With a terminal, drive the approval through a pseudo-terminal against a stand-in terraform.
+# It writes a fixed plan, records which plan file it was asked to apply, and writes state where
+# it was run, so the test can prove apply planned from the gated copy and brought state back.
 mkdir "$work/fakebin"
 cat > "$work/fakebin/terraform" <<'FAKE'
 #!/usr/bin/env bash
-[ "${1#-chdir=}" != "$1" ] && shift
+dir=.
+case $1 in -chdir=*) dir=${1#-chdir=}; shift ;; esac
 case $1 in
   init|validate) exit 0 ;;
+  plan) for a; do case $a in -out=*) printf 'fake plan bytes\n' > "${a#-out=}" ;; esac; done ;;
   show) if [ "$2" = -json ]; then
           echo '{"variables":{"tools":{"value":{"retrieve":{"access":"read"},"restart":{"access":"write"}}}},"resource_changes":[{"type":"aws_iam_role_policy","address":"module.orchestration.aws_iam_role_policy.invoke","change":{"actions":["create"]}}]}'
         else echo "Plan: 1 to add, 0 to change, 0 to destroy."; fi ;;
   apply) for a; do last=$a; done
-         python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$last" > "$FAKE_APPLIED" ;;
+         python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$last" > "$FAKE_APPLIED"
+         echo '{"applied": true}' > "$dir/terraform.tfstate"
+         case $dir in "$FAKE_PROJECT"*) echo "applied inside the project, not the gated copy" > "$FAKE_APPLIED" ;; esac ;;
   *) exit 1 ;;
 esac
 FAKE
@@ -104,8 +114,8 @@ while True:
 sys.stdout.write(out.decode(errors="replace"))
 sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))
 PTY
-digest=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$work/src/terraform-aws/envs/dev/tfplan")
-export FAKE_APPLIED=$work/applied
+digest=$(printf 'fake plan bytes\n' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')
+export FAKE_APPLIED=$work/applied FAKE_PROJECT=$work/src
 out=$(PATH=$work/fakebin:$PATH python3 "$work/drive_tty.py" "not-the-fingerprint" "$b" apply "$work/src" dev 2>&1) \
   && { echo "FAIL: apply ran with the wrong fingerprint"; exit 1; }
 [ ! -e "$FAKE_APPLIED" ] || { echo "FAIL: terraform apply was called after a wrong fingerprint"; exit 1; }
@@ -113,6 +123,8 @@ echo "$out" | grep -q 'write  restart' && echo "$out" | grep -q 'aws_iam_role_po
   || { echo "FAIL: the human was not shown the tool labels and permission changes:"; echo "$out"; exit 1; }
 PATH=$work/fakebin:$PATH python3 "$work/drive_tty.py" "${digest:0:12}" "$b" apply "$work/src" dev >/dev/null 2>&1 \
   || { echo "FAIL: apply refused the right fingerprint"; exit 1; }
-[ "$(cat "$FAKE_APPLIED")" = "$digest" ] || { echo "FAIL: terraform applied a different plan than the one approved"; exit 1; }
+[ "$(cat "$FAKE_APPLIED")" = "$digest" ] || { echo "FAIL: terraform applied a different plan than the one approved: $(cat "$FAKE_APPLIED")"; exit 1; }
+grep -q '"applied": true' "$work/src/terraform-aws/envs/dev/terraform.tfstate" 2>/dev/null \
+  || { echo "FAIL: state was not copied back into the project after apply"; exit 1; }
 
 echo "PASS: gates refuse every bypass tried; apply needs a terminal and the exact plan fingerprint"

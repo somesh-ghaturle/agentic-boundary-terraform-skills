@@ -14,7 +14,7 @@ Source of truth: [Agentic-AI-Systems at v0.1.0](https://github.com/somesh-ghatur
 The skill applies Agentic-AI-Systems' own rule to itself. The agent is the orchestrator: it reads, checks and plans. Only a human changes infrastructure.
 
 1. **Claude Code hook:** this plugin's `PreToolUse` hook blocks every `terraform` or `tofu` subcommand outside a read-only list, any `-auto-approve`, and `boundary.sh apply`. Claude Code enforces it, not this text.
-2. **Human-only apply:** `boundary.sh apply` refuses to run without a real terminal. It reruns every gate, snapshots the plan, shows the tool labels and every permission change, and applies that exact snapshot only after the human types its fingerprint. This is the Hermes approval pattern: bound to the exact action and used once.
+2. **Human-only apply:** `boundary.sh apply` refuses to run without a real terminal. It reruns every gate and then makes its own plan from the gated copy, with providers downloaded fresh. The human's credentials never run the agent's plan file or provider binaries, and what gets applied is exactly what was gated. It shows the tool labels and every permission change, and applies only after the human types the plan's fingerprint. This is the Hermes approval pattern: bound to the exact action and used once.
 3. **Read-only cloud credentials for the agent:** the first two locks read text and check for a terminal, so a determined process could get around them. Cloud credentials cannot be talked around. Tell the user to give the agent's session a read-only identity, such as AWS `ReadOnlyAccess`, GCP Viewer, Azure Reader or a Snowflake role without write grants, and to keep deploy credentials for the human's own terminal. Recommend this every time; it is the lock the other two exist to back up.
 
 ## Hard rules
@@ -76,7 +76,7 @@ set -o pipefail; scripts/boundary.sh check <project-dir> 2>&1 | tee <project-dir
 
 `pipefail` matters: without it the pipeline reports `tee`'s success even when a gate failed. A non-zero exit means stop.
 
-`check` copies the tree to a scratch folder first and judges only the copy, so nothing can be swapped in mid-check. It refuses symlinks, `.tf.json` files and override files, because Terraform reads them and the text-based tests do not. It also refuses module or provider sources that are remote, or that leave the tree, unless the pinned release already uses them. The gates then run in order and stop at the first failure:
+`check` copies the tree to a scratch folder first and judges only the copy, so nothing can be swapped in mid-check. It refuses symlinks, `.tf.json` files and override files, because Terraform reads them and the text-based tests do not. It also refuses module or provider sources that are remote, or that leave the tree, unless the pinned release already uses them. And it refuses provisioners, external data sources and any state backend except an empty local one, because each can run commands or send state elsewhere under whoever applies. Remote state is not supported by `boundary.sh apply` yet. The gates then run in order and stop at the first failure:
 
 1. **write boundary:** the pinned release's tests for that tree, which read your `.tf` source and fail on the edits `terraform validate` accepts.
 2. **provider pins:** every provider pins a major, and one tree agrees with itself.
@@ -87,7 +87,7 @@ All four must pass before Step 5. Keep the evidence log; the regulated section b
 
 ## Step 5: plan, then stop
 
-Only if the user asks and has read-only cloud credentials. For `aws`, `azure` and `gcp`, run `terraform-<cloud>/src/build.sh` first, because plan reads the function packages. Then run `terraform -chdir=<project-dir>/terraform-<cloud>/envs/<env> plan -out=tfplan`, show the summary, and stop.
+For `aws`, `azure` and `gcp`, run `terraform-<cloud>/src/build.sh` first, because plan reads the function packages. If the user wants a preview and the agent has read-only cloud credentials, run `terraform -chdir=<project-dir>/terraform-<cloud>/envs/<env> plan`, show the summary, and stop. This preview is never applied.
 
 Then tell the human to run this in their own terminal, with their own deploy credentials:
 
@@ -95,7 +95,7 @@ Then tell the human to run this in their own terminal, with their own deploy cre
 scripts/boundary.sh apply <project-dir> <env>
 ```
 
-It shows them what no static gate can see: every tool's `access` label from `terraform.tfvars`, and every permission the plan changes. Every tool that changes state must say `write`, and the orchestrator must gain read tools only. On `snowflake`, tool labels live in `.tf` files, so the gates already check them. The human types the plan's fingerprint to apply, or anything else to stop.
+It plans again from the gated copy and shows them what no static gate can see: every tool's `access` label from `terraform.tfvars`, and every permission the plan changes. Every tool that changes state must say `write`, and the orchestrator must gain read tools only. On `snowflake`, tool labels live in `.tf` files, so the gates already check them. The human types the plan's fingerprint to apply, or anything else to stop.
 
 ## Security review
 

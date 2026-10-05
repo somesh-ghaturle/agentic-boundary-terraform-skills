@@ -9,11 +9,13 @@
 # check stops at the first failing gate and exits non-zero. It never runs plan or apply.
 #
 # apply is the human step, and the second of three locks (hooks/guard.py is the first, read-only
-# cloud credentials for the agent are the third). It refuses without a terminal, reruns every
-# gate, snapshots the plan, shows it with the tool labels and permission changes, and applies
-# only after the human types the snapshot's fingerprint. Approval binds that exact plan, is used
-# once, and has no gap between approving and applying, which is the Hermes approval pattern from
-# Agentic-AI-Systems applied to the deploy itself.
+# cloud credentials for the agent are the third). It refuses without a terminal and reruns every
+# gate. It then plans from the gated copy itself, with providers downloaded fresh into a private
+# cache, so the human's credentials never run the agent's plan file or the agent's provider
+# binaries, and what is applied is exactly what was gated. It shows the plan with the tool labels
+# and permission changes, and applies only after the human types the plan's fingerprint.
+# Approval binds that exact plan, is used once, and has no gap between approving and applying,
+# which is the Hermes approval pattern from Agentic-AI-Systems applied to the deploy itself.
 #
 # Trust model. The project is what the gated agent edits, so check trusts nothing in it except
 # the .tf and lock files it is there to judge. The release is pinned here, in the skill, by tag
@@ -75,7 +77,7 @@ check() {
   # Copy first, then judge only the copy. Scanning the project and copying it afterwards would
   # leave a window to swap a file in between. cp -R keeps symlinks as symlinks, so the scan
   # below still sees them.
-  local chk=$tmp/check/terraform-$cloud
+  chk=$tmp/check/terraform-$cloud   # global: apply plans from this gated copy
   mkdir -p "$tmp/check"
   cp -R "$tree" "$chk"
   [ ! -L "$chk" ] || die "$tree became a symlink while being copied"
@@ -90,6 +92,23 @@ ${odd//$chk/$tree}"
   # -I: ignore PYTHON* variables and the current directory. pycache_prefix: never read a
   # cached bytecode file that sits next to a source file.
   local py=(python3 -I -X "pycache_prefix=$tmp/pycache")
+  # Constructs that run local commands, or send state somewhere else, under whoever applies.
+  # None appear in the pinned release; boundary.sh apply keeps state in the project, local.
+  gate "no provisioners, external data or backends" "${py[@]}" - "$chk" <<'PY'
+import pathlib, re, sys
+RISKY = re.compile(r'\bprovisioner\s+"|\bdata\s+"external"|\bbackend\s+"|^\s*cloud\s*\{', re.M)
+# An empty local backend keeps state in the env directory, which is where apply expects it.
+LOCAL = re.compile(r'\bbackend\s+"local"\s*\{\s*\}')
+root = pathlib.Path(sys.argv[1])
+def code(path):
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return LOCAL.sub("", "\n".join(l for l in lines if not l.lstrip().startswith(("#", "//"))))
+bad = [f"{p.relative_to(root)}: {m.group(0).strip()}" for p in root.rglob("*.tf")
+       for m in RISKY.finditer(code(p))]
+for line in bad:
+    print(line)
+sys.exit(1 if bad else 0)
+PY
   # Remote module code is fetched at init and never seen by the text-based tests, and a local
   # path that leaves the tree is not in the copy. Sources must be local and inside the tree,
   # or exactly ones the pinned release already uses.
@@ -137,29 +156,44 @@ apply() {
   local cloud; cloud=$(sed -n 's/^cloud=//p' "$dest/.boundary/pin")
   valid_cloud "$cloud" || die "pin names an unknown cloud: '$cloud'"
   case $env in ''|*[!a-z0-9_-]*) die "usage: boundary.sh apply <dest> <env>";; esac
-  local envdir=$dest/terraform-$cloud/envs/$env
+  envdir=$dest/terraform-$cloud/envs/$env
   [ -d "$envdir" ] && [ ! -L "$envdir" ] || die "$envdir is missing or is a symlink"
-  [ -f "$envdir/tfplan" ] && [ ! -L "$envdir/tfplan" ] \
-    || die "no plan at $envdir/tfplan; run: terraform -chdir=$envdir plan -out=tfplan"
+  local f
+  for f in terraform.tfstate terraform.tfstate.backup; do
+    [ ! -L "$envdir/$f" ] || die "$envdir/$f is a symlink"
+  done
 
-  ( check "$dest" ) || die "the gates must pass before anything is applied"
+  # A private provider cache, so no binary the agent downloaded or swapped runs with the
+  # human's credentials. check honours it.
+  export TF_PLUGIN_CACHE_DIR; TF_PLUGIN_CACHE_DIR=$(mktemp -d)
+  check "$dest"
+  run=$chk/envs/$env
+  [ -d "$run" ] || die "no envs/$env in the gated copy"
 
-  # Snapshot the plan once. Everything after this reads the snapshot, so the plan cannot change
-  # between what the human sees, what they approve and what terraform applies.
-  snap=$(mktemp -d); trap 'rm -rf "$snap"' EXIT
-  cp "$envdir/tfplan" "$snap/tfplan"
+  # State stays in the project. Copy it in, and copy it back whatever happens, because a
+  # failed apply still changes real infrastructure and its state must not be lost.
+  for f in terraform.tfstate terraform.tfstate.backup; do
+    [ ! -f "$envdir/$f" ] || cp "$envdir/$f" "$run/$f"
+  done
+  trap 'for f in terraform.tfstate terraform.tfstate.backup; do
+          [ ! -f "$run/$f" ] || cp "$run/$f" "$envdir/$f"
+        done; rm -rf "$tmp" "$TF_PLUGIN_CACHE_DIR"' EXIT
+
+  echo "== plan, from the gated copy"
+  terraform -chdir="$run" init -input=false -no-color >/dev/null
+  terraform -chdir="$run" plan -input=false -no-color -out="$tmp/tfplan" >/dev/null
   local digest
-  digest=$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$snap/tfplan")
+  digest=$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$tmp/tfplan")
 
-  terraform -chdir="$envdir" show -no-color "$snap/tfplan"
+  terraform -chdir="$run" show -no-color "$tmp/tfplan"
   echo
-  terraform -chdir="$envdir" show -json "$snap/tfplan" | python3 -I -c "$SUMMARY"
+  terraform -chdir="$run" show -json "$tmp/tfplan" | python3 -I -c "$SUMMARY"
   echo
   echo "plan fingerprint: $digest"
   printf 'Type the first 12 characters of the fingerprint to apply exactly this plan: '
   local answer; read -r answer </dev/tty
   [ "$answer" = "${digest:0:12}" ] || die "not approved; nothing was applied"
-  terraform -chdir="$envdir" apply -input=false "$snap/tfplan"
+  terraform -chdir="$run" apply -input=false "$tmp/tfplan"
 }
 
 # What the human checks before typing the fingerprint: every tool's label, which no static gate
