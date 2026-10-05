@@ -39,11 +39,23 @@ class Install(unittest.TestCase):
                 self.assertTrue(self.guard.is_file())
                 self.assertIn(str(self.guard), json.dumps(self.config(path)["hooks"][event]))
 
-    def test_cursor_hook_fails_closed_and_only_matches_terraform(self):
+    def test_cursor_hook_fails_closed(self):
         install("cursor", self.home)
         entry = self.config(".cursor/hooks.json")["hooks"]["beforeShellExecution"][0]
         self.assertTrue(entry["failClosed"])
-        self.assertIn("terraform", entry["matcher"])
+
+    def test_cursor_matcher_is_never_narrower_than_the_guard(self):
+        # Cursor filters on the raw command before the guard runs; every spelling the shell
+        # turns into terraform must still reach the guard.
+        import re
+        install("cursor", self.home)
+        matcher = re.compile(self.config(".cursor/hooks.json")["hooks"]["beforeShellExecution"][0]["matcher"])
+        for cmd in ["terraform apply", "TERRAFORM apply", '"terra""form" apply', "t\\erraform apply",
+                    "{terraform,apply}", "tofu apply", "scripts/boundary.sh apply . dev",
+                    "terraform plan -auto-approve", "$'\\x74erraform' apply"]:
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(matcher.search(cmd))
+        self.assertIsNone(matcher.search("git status"))
 
     def test_keeps_existing_hooks_and_is_idempotent(self):
         existing = {"hooks": {"PreToolUse": [{"matcher": "^Bash$", "hooks": [{"type": "command", "command": "mine.sh"}]}]}}

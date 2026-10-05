@@ -1,6 +1,6 @@
 {
   "name": "agentic-boundary-terraform",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Human-in-the-loop deployment of Agentic-AI-Systems agents on AWS, Azure, GCP or Snowflake, with security review and regulated-environment evidence. Works in Claude Code, Codex, Cursor and Windsurf. Only a human applies.",
   "author": {
     "name": "Somesh Ghaturle"

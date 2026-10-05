@@ -49,6 +49,34 @@ class Guard(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertEqual(run(cmd), 0)
 
+    def test_blocks_what_the_shell_would_turn_into_terraform(self):
+        for cmd in [
+            "TERRAFORM apply",
+            "Terraform destroy",
+            '"terra""form" apply',
+            "t\\erraform apply",
+            "{terraform,apply}",
+            "terraform${IFS}apply",
+            "echo apply | xargs terraform",
+            "alias tf=terraform; tf apply",
+            "$'\\x74erraform' apply",
+            "terraform -chdir=$DIR plan",
+            "terraform plan -AUTO-APPROVE",
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(run(cmd), 2)
+
+    def test_allows_the_commands_the_skill_itself_runs(self):
+        for cmd in [
+            "terraform -chdir=infra/terraform-aws/envs/dev plan",
+            "infra/terraform-aws/src/build.sh",
+            "ls terraform-gcp/envs",
+            "set -o pipefail; scripts/boundary.sh check ./infra 2>&1 | tee ./infra/.boundary/evidence-$(date +%F).log",
+            "scripts/boundary.sh fetch aws ./infra",
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(run(cmd), 0)
+
     def test_ignores_other_tools(self):
         self.assertEqual(run("terraform apply", tool="Read"), 0)
 

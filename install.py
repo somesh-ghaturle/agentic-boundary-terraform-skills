@@ -24,6 +24,22 @@ HERE = pathlib.Path(__file__).resolve().parent
 SKILL = HERE / "skills" / "terraform-boundary"
 
 
+def cursor_matcher():
+    """A regex that matches every command the guard could react to.
+
+    Cursor applies it to the raw command before the guard runs, so it must not be narrower than
+    the guard: the shell turns "terra""form" and t\\erraform into terraform, and macOS runs
+    TERRAFORM. So any letter case, with quotes or backslashes allowed between letters, plus
+    ANSI-C quoting, which can spell anything.
+    """
+    gap = r"""[\\'"]*"""
+    def spelled(word):
+        return gap.join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else "\\" + c if c == "." else c
+                        for c in word)
+    words = ["terraform", "tofu", "boundary.sh", "auto-approve"]
+    return "|".join([spelled(w) for w in words] + [r"\$'"])
+
+
 def hook_target(agent, home, guard):
     """(config path, event name, hook entry, wrapper) for one agent."""
     command = f'python3 "{guard}"'
@@ -32,8 +48,8 @@ def hook_target(agent, home, guard):
         entry = {"matcher": "^Bash$", "hooks": [{"type": "command", "command": command}]}
         return codex_home / "hooks.json", "PreToolUse", entry, {}
     if agent == "cursor":
-        # Fires only on Terraform-related commands, and blocks if the guard crashes or hangs.
-        entry = {"command": command, "matcher": r"terraform|tofu|boundary\.sh|auto-approve", "failClosed": True}
+        # Fires on every spelling the guard reacts to, and blocks if the guard crashes or hangs.
+        entry = {"command": command, "matcher": cursor_matcher(), "failClosed": True}
         return home / ".cursor" / "hooks.json", "beforeShellExecution", entry, {"version": 1}
     if agent == "windsurf":
         entry = {"command": command, "show_output": True}

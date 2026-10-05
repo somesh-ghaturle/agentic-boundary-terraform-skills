@@ -17,18 +17,28 @@ It blocks anything that would change real infrastructure:
   - -auto-approve anywhere
   - boundary.sh apply, the human-only step
 
-It reads shell text, so a determined agent can hide a command from it (base64, variables). That
-is why it is not the only lock: boundary.sh apply also refuses to run without a real terminal,
+It reads shell text, and the shell does more than any parser here: expansion, globbing, aliases,
+scripts. So when a command mentions Terraform at all, the guard insists it be written out
+literally: no $, backticks, braces, globs, ANSI-C quoting, xargs, alias or eval anywhere in it,
+or it is denied. Names are compared case-insensitively, because macOS runs TERRAFORM as
+terraform. A script or variable that never names Terraform is still invisible, which is why it
+is not the only lock: boundary.sh apply also refuses to run without a real terminal,
 and the agent should hold read-only cloud credentials, which no text trick gets around.
 """
 import json
 import os
+import re
 import shlex
 import sys
 
 TERRAFORM = {"terraform", "tofu"}
 READ_ONLY = {"init", "validate", "plan", "fmt", "show", "version", "providers", "output", "graph", "get"}
 OPERATORS = {"&&", "||", ";", "|", "&", "(", ")", "|&", ";;"}
+# Terraform as a word, after the shell removes quotes and backslashes. Not followed by "-" or a
+# word character, so directory names such as terraform-aws are not a mention.
+MENTION = re.compile(r'(?<![\w-])(terraform|tofu)(?![\w-])', re.I)
+EXPANSION = set("$`{}*?[]")
+INDIRECT = {"xargs", "parallel", "alias", "eval", "source", ".", "function"}
 
 
 def words(command):
@@ -39,6 +49,11 @@ def words(command):
 
 def problem(command, depth=0):
     """Why this command must not run, or None."""
+    if "$'" in command:
+        return "ANSI-C quoting ($'...') can spell any command; write it out literally"
+    literal = re.sub(r"[\\'\"]", "", command)
+    if MENTION.search(literal) and EXPANSION & set(command):
+        return "a command that mentions Terraform must not use shell expansion ($ ` { } * ? [ ])"
     try:
         tokens = words(command)
     except ValueError:
@@ -46,10 +61,12 @@ def problem(command, depth=0):
         if any(k in command for k in ("terraform", "tofu", "boundary.sh")):
             return "could not parse a command that mentions terraform or boundary.sh"
         return None
+    if MENTION.search(literal) and any(t.lower() in INDIRECT for t in tokens):
+        return "a command that mentions Terraform must not pass arguments through xargs, alias or eval"
     for i, tok in enumerate(tokens):
-        if tok == "-auto-approve" or tok.startswith("-auto-approve="):
+        if tok.lower() == "-auto-approve" or tok.lower().startswith("-auto-approve="):
             return "-auto-approve skips the human"
-        base = os.path.basename(tok)
+        base = os.path.basename(tok).lower()
         if base in TERRAFORM:
             sub = None
             for nxt in tokens[i + 1:]:
@@ -58,7 +75,7 @@ def problem(command, depth=0):
                 if not nxt.startswith("-"):
                     sub = nxt
                     break
-            if sub is not None and sub not in READ_ONLY:
+            if sub is not None and sub.lower() not in READ_ONLY:
                 return f"`{base} {sub}` changes infrastructure; only a human may run it"
         if base == "boundary.sh" and i + 1 < len(tokens) and tokens[i + 1] == "apply":
             return "boundary.sh apply is the human-only step"
