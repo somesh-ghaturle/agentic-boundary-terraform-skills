@@ -14,12 +14,32 @@ It is built on three pillars, and does nothing outside them:
 
 ## Install
 
-In a Claude Code session:
+It works in Claude Code, Codex, Cursor and Windsurf. The skill, the gates and the human-only apply are the same everywhere; each agent gets the same guard through its own hook system.
+
+**Claude Code**, in a session:
 
 ```text
 /plugin marketplace add somesh-ghaturle/agentic-boundary-terraform-skills
 /plugin install agentic-boundary-terraform@agentic-boundary
 ```
+
+**Codex, Cursor or Windsurf**, from a clone of this repository:
+
+```bash
+git clone https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills.git
+cd agentic-boundary-terraform-skills
+python3 install.py codex      # or: cursor, windsurf
+```
+
+`install.py` copies the skill to `~/.agents/skills/terraform-boundary`, which all three load skills from, and adds the guard to that agent's user-level hooks:
+
+| Agent | Hook file | Hook event | Behaviour |
+| --- | --- | --- | --- |
+| Codex | `~/.codex/hooks.json` | `PreToolUse` | Blocks state-changing Terraform commands |
+| Cursor | `~/.cursor/hooks.json` | `beforeShellExecution` | Blocks them, asks you to confirm every other Terraform command, and fails closed |
+| Windsurf | `~/.codeium/windsurf/hooks.json` | `pre_run_command` | Blocks state-changing Terraform commands |
+
+It keeps any hooks you already have, backs up the file it changes, and does nothing the second time. It installs at user level on purpose: a hook file inside a project is one the agent can edit.
 
 The gates need `python3`, `terraform` and [`conftest`](https://www.conftest.dev/install/) on your machine.
 
@@ -48,7 +68,7 @@ The agent can read, check and plan. Only you can change infrastructure, and thre
 
 | Lock | Where | What it stops |
 | --- | --- | --- |
-| Claude Code hook | `hooks/guard.py` | The agent running `terraform apply`, `destroy`, `-auto-approve` or `boundary.sh apply` |
+| Agent hook | `skills/terraform-boundary/hooks/guard.py` | The agent running `terraform apply`, `destroy`, `-auto-approve` or `boundary.sh apply`, in Claude Code, Codex, Cursor or Windsurf |
 | Human-only apply | `boundary.sh apply` | Applying without a terminal, applying anything but a fresh plan of the gated copy, or applying a plan whose fingerprint you did not type. Your credentials never run the agent's plan file or provider binaries |
 | Read-only credentials | Your cloud account | Everything else. Give the agent's session a read-only identity and keep deploy credentials for your own terminal |
 
@@ -64,13 +84,13 @@ The skill works through the [governance](https://github.com/somesh-ghaturle/Agen
 
 ## Status
 
-Version 1.3.1. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
+Version 1.4.0. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
 
 Two test files prove it:
 
 ```bash
 bash tests/test_boundary.sh        # every bypass tried is refused; apply needs a terminal and the exact fingerprint
-python3 -m unittest tests/test_guard.py tests/test_state.py   # the hook, and state handling that never follows a symlink
+python3 -m unittest tests/test_guard.py tests/test_state.py tests/test_install.py   # the guard in all four agents, state handling, the installer
 ```
 
 The gate trusts nothing in your project except the Terraform it judges. Its tests, policies and checker come from the pinned release on every run, so editing them in the project changes nothing.

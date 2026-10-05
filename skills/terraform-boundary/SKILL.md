@@ -39,8 +39,8 @@ Source of truth: [Agentic-AI-Systems at v0.1.0](https://github.com/somesh-ghatur
 
 The skill applies Agentic-AI-Systems' own rule to itself. The agent is the orchestrator: it reads, checks and plans. Only a human changes infrastructure.
 
-1. **Claude Code hook:** this plugin's `PreToolUse` hook blocks every `terraform` or `tofu` subcommand outside a read-only list, any `-auto-approve`, and `boundary.sh apply`. Claude Code enforces it, not this text.
-2. **Human-only apply:** `boundary.sh apply` refuses to run without a real terminal. It reruns every gate and then makes its own plan from the gated copy, with providers downloaded fresh. The human's credentials never run the agent's plan file or provider binaries, and what gets applied is exactly what was gated. It shows the tool labels and every permission change, and applies only after the human types the plan's fingerprint. This is the Hermes approval pattern: bound to the exact action and used once.
+1. **Agent hook:** the same guard, `hooks/guard.py` in this skill, runs before every shell command the agent issues in Claude Code, Codex, Cursor and Windsurf. It blocks every `terraform` or `tofu` subcommand outside a read-only list, any `-auto-approve`, and `boundary.sh apply`. The agent tool enforces it, not this text. In Cursor it also asks the human to confirm every Terraform command, read-only ones included.
+2. **Human-only apply:** `boundary.sh apply` refuses to run without a real terminal, whichever agent is in use. It reruns every gate and then makes its own plan from the gated copy, with providers downloaded fresh. The human's credentials never run the agent's plan file or provider binaries, and what gets applied is exactly what was gated. It shows the tool labels and every permission change, and applies only after the human types the plan's fingerprint. This is the Hermes approval pattern: bound to the exact action and used once.
 3. **Read-only cloud credentials for the agent:** the first two locks read text and check for a terminal, so a determined process could get around them. Cloud credentials cannot be talked around. Tell the user to give the agent's session a read-only identity, such as AWS `ReadOnlyAccess`, GCP Viewer, Azure Reader or a Snowflake role without write grants, and to keep deploy credentials for the human's own terminal. Recommend this every time; it is the lock the other two exist to back up.
 
 ## Pillar 2: security review
@@ -76,7 +76,7 @@ The agent fills in everything above `Applied`. Only the human fills in `Applied`
 
 ## Hard rules
 
-1. **Never run `terraform apply`**, `destroy` or `boundary.sh apply`, and never try to get around the hook. Stop at `plan` and hand it to a human. An agent applying its own infrastructure is the exact failure this skill exists to prevent.
+1. **Never run `terraform apply`**, `destroy` or `boundary.sh apply`, and never try to get around the guard, in any agent tool. Stop at `plan` and hand it to a human. An agent applying its own infrastructure is the exact failure this skill exists to prevent.
 2. **Never edit anything under `terraform-<cloud>/tests/` or `.boundary/`** to make a gate pass. A failing gate means the change is wrong. Fix the change, or stop and tell the user which gate failed and why.
 3. **Never widen what the orchestrator can invoke.** No write tool ARN, role, member or grant reaches the orchestrator's identity, directly or through inheritance.
 4. **Never relabel a write tool as `read`**, in `.tf` or in `.tfvars`. Tool declarations, including each tool's `access` label, live in `terraform.tfvars`, which no gate can read. The label is trusted, so only a human can catch a wrong one.

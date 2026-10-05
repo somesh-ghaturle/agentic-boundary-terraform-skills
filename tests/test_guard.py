@@ -5,7 +5,7 @@ import subprocess
 import sys
 import unittest
 
-GUARD = pathlib.Path(__file__).resolve().parents[1] / "hooks" / "guard.py"
+GUARD = pathlib.Path(__file__).resolve().parents[1] / "skills" / "terraform-boundary" / "hooks" / "guard.py"
 
 
 def run(command, tool="Bash"):
@@ -51,6 +51,35 @@ class Guard(unittest.TestCase):
 
     def test_ignores_other_tools(self):
         self.assertEqual(run("terraform apply", tool="Read"), 0)
+
+
+def raw(event):
+    proc = subprocess.run([sys.executable, str(GUARD)], input=json.dumps(event), capture_output=True, text=True)
+    return proc.returncode, proc.stdout
+
+
+class OtherAgents(unittest.TestCase):
+    """The same guard, fed each agent's own hook payload."""
+
+    def test_codex_argv_list(self):
+        self.assertEqual(raw({"tool_name": "Bash", "tool_input": {"command": ["bash", "-lc", "terraform apply"]}})[0], 2)
+        self.assertEqual(raw({"tool_name": "Bash", "tool_input": {"command": ["terraform", "plan"]}})[0], 0)
+
+    def test_windsurf_pre_run_command(self):
+        event = lambda c: {"agent_action_name": "pre_run_command", "tool_info": {"command_line": c, "cwd": "/x"}}
+        self.assertEqual(raw(event("terraform -chdir=infra destroy"))[0], 2)
+        self.assertEqual(raw(event("terraform plan"))[0], 0)
+        self.assertEqual(raw(event("ls"))[0], 0)
+
+    def test_cursor_denies_with_json_and_exit_2(self):
+        code, out = raw({"command": "terraform apply tfplan", "cwd": "/x", "sandbox": False})
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(out)["permission"], "deny")
+
+    def test_cursor_never_auto_allows(self):
+        code, out = raw({"command": "terraform plan", "cwd": "/x", "sandbox": False})
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["permission"], "ask")
 
 
 if __name__ == "__main__":
