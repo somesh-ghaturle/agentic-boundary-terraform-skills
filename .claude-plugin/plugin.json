@@ -1,8 +1,10 @@
 {
   "name": "agentic-boundary-terraform",
-  "version": "1.2.1",
-  "description": "Adapt the Agentic-AI-Systems Terraform to AWS, Azure, GCP or Snowflake without breaking the human-approval write boundary.",
-  "author": { "name": "Somesh Ghaturle" },
+  "version": "1.3.0",
+  "description": "Human-in-the-loop deployment of Agentic-AI-Systems agents on AWS, Azure, GCP or Snowflake, with security review and regulated-environment evidence. Only a human applies.",
+  "author": {
+    "name": "Somesh Ghaturle"
+  },
   "repository": "https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills",
   "license": "Apache-2.0"
 }

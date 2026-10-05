@@ -1,21 +1,78 @@
 ---
 name: terraform-boundary
-description: Deploy or change an AI agent's cloud infrastructure on AWS, Azure, GCP or Snowflake so that no state-changing tool can run without a human approving that exact action. Copies a pinned Agentic-AI-Systems Terraform tree, adapts it, and gates every edit on that repository's own write-boundary tests, provider-pin check, OPA policies and terraform validate. Includes a threat-model review and evidence capture for regulated environments. Use when the user wants to deploy an agent with human approval gates, pick a cloud for one, adapt the agentic Terraform, or check that a Terraform change keeps write tools away from the orchestrator. Stops at terraform plan; never runs apply.
+description: Human-in-the-loop deployment of an AI agent's cloud infrastructure, with security review and regulated-environment evidence. Adapts a pinned Agentic-AI-Systems Terraform tree on AWS, Azure, GCP or Snowflake so that no state-changing tool runs without a human approving that exact action, gates every edit on that repository's own write-boundary checks, and leaves apply to a human. Use only when the user wants to deploy, adapt or check an approval-gated agent built from Agentic-AI-Systems, or needs its security review or compliance evidence. Do not use for general Terraform, other infrastructure, application code or anything outside that scope.
 ---
 
 # Terraform boundary
 
-The property this skill protects: **the orchestrator can invoke read tools only. Write tools run only through the approval executor, after a human approves that specific action.** The cloud's identity platform enforces it, not the prompt.
+This skill does one job, built on three pillars. Every step below serves one of them.
+
+| Pillar | What it guarantees |
+| --- | --- |
+| **1. Human in the loop** | Only a human changes infrastructure. The agent reads, checks and plans. Three independent locks hold that line |
+| **2. Security** | The orchestrator can invoke read tools only. Write tools run only through the approval executor, after a human approves that exact action. Every change is reviewed against the threat model before it is planned |
+| **3. Regulated environments** | Every change leaves an evidence record a reviewer can follow: what was gated, against which pinned release, what the security review found, and which human approved what |
+
+The cloud's identity platform enforces the property, not the prompt.
+
+## Scope: this work and nothing else
+
+**In scope:**
+
+- Picking a cloud tree from Agentic-AI-Systems, fetching it, and adapting it within the rules in Step 3.
+- Running the gates, the security review and the evidence record for that tree.
+- Previewing a plan with read-only credentials, and handing the apply to a human.
+
+**Out of scope.** Do not do these under this skill, even if they look related or helpful:
+
+- Applying, destroying or importing anything, or helping get around a lock.
+- General Terraform, other infrastructure, or Terraform not from Agentic-AI-Systems.
+- Application code, the agent's prompts or model choice, CI/CD pipelines, cost tuning or refactoring modules.
+- The hybrid tree, remote state backends, or editing Agentic-AI-Systems itself.
+- Tidying, renaming or "improving" files the task did not ask about.
+
+**When a request is out of scope**, say in one sentence that it is outside this skill, name what it would need instead, and stop. Do not expand the task, start a side quest, or do it anyway. **When a request is in scope**, do exactly that change and nothing more, then run the gates.
 
 Source of truth: [Agentic-AI-Systems at v0.1.0](https://github.com/somesh-ghaturle/Agentic-AI-Systems/tree/v0.1.0). The script pins that release by tag and commit, so the Terraform never drifts under you. `check` runs the tests, policies and provider-pin checker from a fresh copy of that release, never the copies in the project, so editing them cannot change a verdict. Moving to a newer release means updating this skill.
 
-## The human stays in the loop: three locks
+## Pillar 1: human in the loop, three locks
 
 The skill applies Agentic-AI-Systems' own rule to itself. The agent is the orchestrator: it reads, checks and plans. Only a human changes infrastructure.
 
 1. **Claude Code hook:** this plugin's `PreToolUse` hook blocks every `terraform` or `tofu` subcommand outside a read-only list, any `-auto-approve`, and `boundary.sh apply`. Claude Code enforces it, not this text.
 2. **Human-only apply:** `boundary.sh apply` refuses to run without a real terminal. It reruns every gate and then makes its own plan from the gated copy, with providers downloaded fresh. The human's credentials never run the agent's plan file or provider binaries, and what gets applied is exactly what was gated. It shows the tool labels and every permission change, and applies only after the human types the plan's fingerprint. This is the Hermes approval pattern: bound to the exact action and used once.
 3. **Read-only cloud credentials for the agent:** the first two locks read text and check for a terminal, so a determined process could get around them. Cloud credentials cannot be talked around. Tell the user to give the agent's session a read-only identity, such as AWS `ReadOnlyAccess`, GCP Viewer, Azure Reader or a Snowflake role without write grants, and to keep deploy credentials for the human's own terminal. Recommend this every time; it is the lock the other two exist to back up.
+
+## Pillar 2: security review
+
+The boundary itself is the security property; the locks above and the gates in Step 4 protect it. On top of that, before Step 5, answer these four questions in writing for every change. They come from [THREAT-MODEL.md](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/docs/THREAT-MODEL.md):
+
+1. **Compromised orchestrator:** what can it invoke now that it could not before?
+2. **Prompt-injected model:** can model output now reach a write tool without an approval?
+3. **Leaked approval claim:** is it still single-use, bound to the exact arguments, and expiring?
+4. **Terraform change:** would a later broad grant reopen the path? Only `gcp` survives that by design.
+
+If any answer is "more than before", stop and tell the user before planning.
+
+## Pillar 3: regulated environments
+
+For a regulated deployment, work through the [governance](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/docs/governance-checklist.md), [security](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/docs/security-checklist.md) and [privacy](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/docs/privacy-checklist.md) checklists, and read [COMPLIANCE.md](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/COMPLIANCE.md) for the evidence model.
+
+Hand the user one evidence record per change, in this shape:
+
+```text
+Change:            <one line: what changed and why>
+Cloud and env:     <aws|azure|gcp|snowflake> / <env>
+Pinned release:    <last line of the Step 4 log: tag and commit>
+Gates:             <pass, with the path to the Step 4 log>
+Security review:   <the four answers from Pillar 2>
+Checklists:        <governance, security, privacy: items reviewed, items open>
+Plan preview:      <summary, or "not run: no read-only credentials">
+Approver:          <the human who will run boundary.sh apply>
+Applied:           <filled in by that human: date and plan fingerprint they typed>
+```
+
+The agent fills in everything above `Applied`. Only the human fills in `Applied`, because only the human applies. These checklists support a compliance review. They do not certify one, and you must not say that they do.
 
 ## Hard rules
 
@@ -24,6 +81,7 @@ The skill applies Agentic-AI-Systems' own rule to itself. The agent is the orche
 3. **Never widen what the orchestrator can invoke.** No write tool ARN, role, member or grant reaches the orchestrator's identity, directly or through inheritance.
 4. **Never relabel a write tool as `read`**, in `.tf` or in `.tfvars`. Tool declarations, including each tool's `access` label, live in `terraform.tfvars`, which no gate can read. The label is trusted, so only a human can catch a wrong one.
 5. **Say where the clouds differ.** Do not tell the user the guarantee is the same everywhere. It is not.
+6. **Stay in scope.** Do only the change asked for. If the request, or a fix you are tempted to make, falls outside the scope above, say so and stop.
 
 ## Step 1: pick the cloud
 
@@ -83,7 +141,7 @@ set -o pipefail; scripts/boundary.sh check <project-dir> 2>&1 | tee <project-dir
 3. **policies:** the OPA policies, such as a content filter that nothing references.
 4. **validate:** `terraform init -backend=false` and `validate` on every env root.
 
-All four must pass before Step 5. Keep the evidence log; the regulated section below uses it.
+All four must pass before Step 5. Keep the evidence log; Pillar 3 uses it.
 
 ## Step 5: plan, then stop
 
@@ -96,20 +154,3 @@ scripts/boundary.sh apply <project-dir> <env>
 ```
 
 It plans again from the gated copy and shows them what no static gate can see: every tool's `access` label from `terraform.tfvars`, and every permission the plan changes. Every tool that changes state must say `write`, and the orchestrator must gain read tools only. On `snowflake`, tool labels live in `.tf` files, so the gates already check them. The human types the plan's fingerprint to apply, or anything else to stop.
-
-## Security review
-
-Before Step 5, answer these four questions in writing for the change you made. They come from [THREAT-MODEL.md](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/docs/THREAT-MODEL.md):
-
-1. **Compromised orchestrator:** what can it invoke now that it could not before?
-2. **Prompt-injected model:** can model output now reach a write tool without an approval?
-3. **Leaked approval claim:** is it still single-use, bound to the exact arguments, and expiring?
-4. **Terraform change:** would a later broad grant reopen the path? Only `gcp` survives that by design.
-
-If any answer is "more than before", stop and tell the user before planning.
-
-## Regulated environments
-
-For a regulated deployment, also work through the [governance](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/docs/governance-checklist.md), [security](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/docs/security-checklist.md) and [privacy](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/docs/privacy-checklist.md) checklists, and read [COMPLIANCE.md](https://github.com/somesh-ghaturle/Agentic-AI-Systems/blob/v0.1.0/COMPLIANCE.md) for the evidence model.
-
-Hand the user one evidence record per change: the Step 4 log, whose last line names the release and commit the gates ran against, the four security answers, the plan summary, and the name of the human who will apply it. These checklists support a compliance review. They do not certify one, and you must not say that they do.

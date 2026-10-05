@@ -8,7 +8,7 @@
     {
       "name": "agentic-boundary-terraform",
       "source": "./",
-      "description": "Adapt the Agentic-AI-Systems Terraform to AWS, Azure, GCP or Snowflake without breaking the human-approval write boundary."
+      "description": "Human-in-the-loop deployment of Agentic-AI-Systems agents on AWS, Azure, GCP or Snowflake, with security review and regulated-environment evidence. Only a human applies."
     }
   ]
 }
