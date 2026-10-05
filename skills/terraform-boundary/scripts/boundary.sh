@@ -31,6 +31,7 @@
 # someone who can edit this script or the machine itself.
 set -euo pipefail
 
+HERE=$(cd "$(dirname "$0")" && pwd)   # the skill's own scripts, never the project's
 REPO=https://github.com/somesh-ghaturle/Agentic-AI-Systems.git
 TAG=v0.1.0
 COMMIT=d9104144fb72c78d08ce096f1842584d63995a7e   # what TAG pointed at when this skill shipped
@@ -92,11 +93,16 @@ ${odd//$chk/$tree}"
   # -I: ignore PYTHON* variables and the current directory. pycache_prefix: never read a
   # cached bytecode file that sits next to a source file.
   local py=(python3 -I -X "pycache_prefix=$tmp/pycache")
+  # Canonical form first, so the regex-based tests read what Terraform reads. fmt fixes spacing
+  # and quotes bare labels, and fails on invalid syntax; canonical.py refuses block comments.
+  gate "terraform fmt (canonical spacing)" terraform fmt -recursive -list=false "$chk"
+  gate "canonical HCL" "${py[@]}" "$HERE/canonical.py" "$chk"
+
   # Constructs that run local commands, or send state somewhere else, under whoever applies.
   # None appear in the pinned release; boundary.sh apply keeps state in the project, local.
   gate "no provisioners, external data or backends" "${py[@]}" - "$chk" <<'PY'
 import pathlib, re, sys
-RISKY = re.compile(r'\bprovisioner\s+"|\bdata\s+"external"|\bbackend\s+"|^\s*cloud\s*\{', re.M)
+RISKY = re.compile(r'\bprovisioner\s*"|\bdata\s*"external"|\bbackend\s*"|^\s*cloud\s*\{', re.M)
 # An empty local backend keeps state in the env directory, which is where apply expects it.
 LOCAL = re.compile(r'\bbackend\s+"local"\s*\{\s*\}')
 root = pathlib.Path(sys.argv[1])
@@ -158,10 +164,7 @@ apply() {
   case $env in ''|*[!a-z0-9_-]*) die "usage: boundary.sh apply <dest> <env>";; esac
   envdir=$dest/terraform-$cloud/envs/$env
   [ -d "$envdir" ] && [ ! -L "$envdir" ] || die "$envdir is missing or is a symlink"
-  local f
-  for f in terraform.tfstate terraform.tfstate.backup; do
-    [ ! -L "$envdir/$f" ] || die "$envdir/$f is a symlink"
-  done
+  envreal=$(cd "$envdir" && pwd -P)
 
   # A private provider cache, so no binary the agent downloaded or swapped runs with the
   # human's credentials. check honours it.
@@ -172,12 +175,14 @@ apply() {
 
   # State stays in the project. Copy it in, and copy it back whatever happens, because a
   # failed apply still changes real infrastructure and its state must not be lost.
-  for f in terraform.tfstate terraform.tfstate.backup; do
-    [ ! -f "$envdir/$f" ] || cp "$envdir/$f" "$run/$f"
-  done
-  trap 'for f in terraform.tfstate terraform.tfstate.backup; do
-          [ ! -f "$run/$f" ] || cp "$run/$f" "$envdir/$f"
-        done; rm -rf "$tmp" "$TF_PLUGIN_CACHE_DIR"' EXIT
+  python3 -I "$HERE/state.py" in "$envdir" "$run" || die "could not read state from $envdir"
+  # If writing state back fails, keep the gated copy: it may hold the only record of what a
+  # partial apply changed.
+  trap 'if python3 -I "$HERE/state.py" out "$run" "$envdir" "$envreal"; then
+          rm -rf "$tmp" "$TF_PLUGIN_CACHE_DIR"
+        else
+          echo "boundary: could not write state back to $envdir; it is kept in $run" >&2
+        fi' EXIT
 
   echo "== plan, from the gated copy"
   terraform -chdir="$run" init -input=false -no-color >/dev/null

@@ -51,6 +51,17 @@ if out=$("$b" check "$work/shapes" 2>&1); then
 fi
 echo "$out" | grep -q 'cannot judge' || { echo "FAIL: symlink refused for the wrong reason:"; echo "$out"; exit 1; }
 
+# Nor by writing Terraform the regex-based tests read differently from Terraform.
+"$b" fetch aws "$work/syntax"
+# Unquoted labels and missing spaces are not here: terraform fmt rewrites both into the form
+# the tests read. Block comments survive fmt, so they are refused.
+for bad in 'locals {\n  x = 1 /* module.tools.read_tool_arns */\n}\n'; do
+  printf "$bad" > "$work/syntax/terraform-aws/envs/dev/extra.tf"
+  out=$("$b" check "$work/syntax" 2>&1) && { echo "FAIL: check accepted: $bad"; exit 1; }
+  echo "$out" | grep -q 'block comment' \
+    || { echo "FAIL: refused for the wrong reason: $bad"; echo "$out"; exit 1; }
+done
+
 # Nor by pulling Terraform from somewhere the copy and the tests never see.
 "$b" fetch aws "$work/src"
 printf 'module "x" {\n  source = "git::https://example.com/widen.git"\n}\n' > "$work/src/terraform-aws/envs/dev/extra.tf"
@@ -80,7 +91,7 @@ cat > "$work/fakebin/terraform" <<'FAKE'
 dir=.
 case $1 in -chdir=*) dir=${1#-chdir=}; shift ;; esac
 case $1 in
-  init|validate) exit 0 ;;
+  init|validate|fmt) exit 0 ;;
   plan) for a; do case $a in -out=*) printf 'fake plan bytes\n' > "${a#-out=}" ;; esac; done ;;
   show) if [ "$2" = -json ]; then
           echo '{"variables":{"tools":{"value":{"retrieve":{"access":"read"},"restart":{"access":"write"}}}},"resource_changes":[{"type":"aws_iam_role_policy","address":"module.orchestration.aws_iam_role_policy.invoke","change":{"actions":["create"]}}]}'

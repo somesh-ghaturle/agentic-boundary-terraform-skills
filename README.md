@@ -46,20 +46,20 @@ This is the same design Agentic-AI-Systems uses for the agents it deploys: the o
 
 ## Status
 
-Version 1.2.0. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
+Version 1.2.1. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
 
 Two test files prove it:
 
 ```bash
 bash tests/test_boundary.sh        # every bypass tried is refused; apply needs a terminal and the exact fingerprint
-python3 -m unittest tests/test_guard.py   # the hook blocks every state-changing command it can see
+python3 -m unittest tests/test_guard.py tests/test_state.py   # the hook, and state handling that never follows a symlink
 ```
 
 The gate trusts nothing in your project except the Terraform it judges. Its tests, policies and checker come from the pinned release on every run, so editing them in the project changes nothing.
 
 ## Limits
 
-The gates read Terraform source as text. They refuse symlinks, `.tf.json` files and override files, because Terraform reads those and the tests do not. They also refuse remote module sources, provisioners, external data sources and any state backend except an empty local one. Remote state is not supported by `boundary.sh apply` yet. They cannot see values in `.tfvars`, including whether each tool is labelled `read` or `write`, or anything only known at plan time. That is why `boundary.sh apply` puts both in front of you before you type the fingerprint. The hook and the terminal check read text, so read-only credentials for the agent are the lock that holds when everything else is tricked.
+The gates read Terraform source as text. They run `terraform fmt` on a copy first, so spacing and label quoting match what the tests expect, and they refuse symlinks, `.tf.json` files, override files and `/* */` block comments, because Terraform reads or ignores those differently from the tests. They also refuse remote module sources, provisioners, external data sources and any state backend except an empty local one. Remote state is not supported by `boundary.sh apply` yet. They cannot see values in `.tfvars`, including whether each tool is labelled `read` or `write`, or anything only known at plan time. That is why `boundary.sh apply` puts both in front of you before you type the fingerprint. The hook and the terminal check read text, so read-only credentials for the agent are the lock that holds when everything else is tricked.
 
 Security review and regulated-environment evidence are sections of the one skill for now. They become separate skills when they have checks of their own to run.
 
