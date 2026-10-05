@@ -94,7 +94,8 @@ ${odd//$chk/$tree}"
   # cached bytecode file that sits next to a source file.
   local py=(python3 -I -X "pycache_prefix=$tmp/pycache")
   # Canonical form first, so the regex-based tests read what Terraform reads. fmt fixes spacing
-  # and quotes bare labels, and fails on invalid syntax; canonical.py refuses block comments.
+  # and quotes bare labels, and fails on invalid syntax; canonical.py refuses any */, so no
+  # block comment can exist.
   gate "terraform fmt (canonical spacing)" terraform fmt -recursive -list=false "$chk"
   gate "canonical HCL" "${py[@]}" "$HERE/canonical.py" "$chk"
 
@@ -164,7 +165,7 @@ apply() {
   case $env in ''|*[!a-z0-9_-]*) die "usage: boundary.sh apply <dest> <env>";; esac
   envdir=$dest/terraform-$cloud/envs/$env
   [ -d "$envdir" ] && [ ! -L "$envdir" ] || die "$envdir is missing or is a symlink"
-  envreal=$(cd "$envdir" && pwd -P)
+  envid=$(python3 -I "$HERE/state.py" id "$envdir") || die "could not identify $envdir"
 
   # A private provider cache, so no binary the agent downloaded or swapped runs with the
   # human's credentials. check honours it.
@@ -175,10 +176,10 @@ apply() {
 
   # State stays in the project. Copy it in, and copy it back whatever happens, because a
   # failed apply still changes real infrastructure and its state must not be lost.
-  python3 -I "$HERE/state.py" in "$envdir" "$run" || die "could not read state from $envdir"
+  python3 -I "$HERE/state.py" in "$envdir" "$envid" "$run" || die "could not read state from $envdir"
   # If writing state back fails, keep the gated copy: it may hold the only record of what a
   # partial apply changed.
-  trap 'if python3 -I "$HERE/state.py" out "$run" "$envdir" "$envreal"; then
+  trap 'if python3 -I "$HERE/state.py" out "$run" "$envdir" "$envid"; then
           rm -rf "$tmp" "$TF_PLUGIN_CACHE_DIR"
         else
           echo "boundary: could not write state back to $envdir; it is kept in $run" >&2
