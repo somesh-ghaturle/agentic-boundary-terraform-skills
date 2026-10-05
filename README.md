@@ -84,7 +84,7 @@ The skill works through the [governance](https://github.com/somesh-ghaturle/Agen
 
 ## Status
 
-Version 1.5.0. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
+Version 1.5.1. The skill works for all four clouds. A clean tree passes every gate on AWS, Azure, GCP and Snowflake.
 
 Two test files prove it:
 

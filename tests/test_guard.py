@@ -72,6 +72,10 @@ class Guard(unittest.TestCase):
             "terraform.exe apply",
             "terraform_1.15.8 apply",
             "~/.local/bin/terraform-1.15 apply",
+            "terraform.real apply",
+            "/opt/tf/terraform_latest apply",
+            "terraform.bin destroy",
+            "tofu.real apply",
             "terraspace up",
             "terraspace all down",
             "python3 -c 'import pty; pty.spawn([\"scripts/boundary.sh\",\"apply\",\"./infra\",\"dev\"])'",
@@ -97,6 +101,10 @@ class Guard(unittest.TestCase):
             "terraform -chdir=infra/terraform/envs/dev plan",
             'bash -lc "cd infra && terraform plan"',
             "terraform-docs markdown .",
+            "terraformer import aws --resources=s3",
+            "cp terraform.tfvars.example terraform.tfvars",
+            "cat terraform.tfstate",
+            "ls terraform.lock.hcl terraform.tfstate.backup",
             "terraspace plan",
         ]:
             with self.subTest(cmd=cmd):

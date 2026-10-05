@@ -55,13 +55,18 @@ TOOLS = {
 # subcommand comes next.
 PASS_THROUGH = {"terragrunt": {"run-all", "run"}, "terraspace": {"all"}}
 NAMES = "terraform|tofu|terragrunt|cdktf|terraspace"
-# A tool's name, optionally with a version a version manager or a download added, and .exe.
-# Only a digit-led suffix counts, so terraform-docs and terraform-aws are other things.
-TOOL_NAME = re.compile(rf'^({NAMES})(?:[-_.]?v?\d[\w.]*)?(?:\.exe)?$', re.I)
+# A tool's name plus whatever a version manager, a download or a wrapper setup put after it:
+# terraform_1.15.8, terraform-1.15, terraform.exe, terraform.real, terraform_latest. A suffix
+# starting with "." or "_" counts, and "-" counts only before a digit, so terraform-docs,
+# terraform-aws and terraformer stay other things.
+SUFFIX = r'(?:[._][\w.-]*|-\d[\w.-]*)?'
+TOOL_NAME = re.compile(rf'^({NAMES}){SUFFIX}$', re.I)
+# Terraform's own files are not the binary: terraform.tfvars, terraform.tfstate.backup, ...
+TF_FILE = re.compile(r'\.(tf|tfvars|tfstate|tfplan|hcl|json|example|backup|md|txt|log|ya?ml|sh|py)(\.|$)', re.I)
 OPERATORS = {"&&", "||", ";", "|", "&", "(", ")", "|&", ";;"}
 # Terraform as a word, after the shell removes quotes and backslashes. Not followed by "-" or a
 # word character, so directory names such as terraform-aws are not a mention.
-MENTION = re.compile(rf'(?<![\w-])({NAMES})(?:[-_.]?v?\d[\w.]*)?(?![\w-])', re.I)
+MENTION = re.compile(rf'(?<![\w-])({NAMES}){SUFFIX}(?![\w-])', re.I)
 # A token that can only be a path or a flag value, never code that runs something.
 PLAIN = re.compile(r'^[\w./=:@+-]+$')
 EXPANSION = set("$`{}*?[]")
@@ -81,9 +86,12 @@ def mentioned(text):
 
 
 def tool(token):
-    """The tool a token names, by basename, case-insensitively, ignoring a version and .exe."""
-    m = TOOL_NAME.match(os.path.basename(token))
-    return m.group(1).lower() if m else None
+    """The tool a token names, by basename, case-insensitively, ignoring version or wrapper suffixes."""
+    base = os.path.basename(token)
+    m = TOOL_NAME.match(base)
+    if not m or TF_FILE.search(base[len(m.group(1)):]):
+        return None
+    return m.group(1).lower()
 
 
 def words(command):
