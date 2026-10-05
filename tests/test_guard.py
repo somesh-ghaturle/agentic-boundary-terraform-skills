@@ -74,6 +74,9 @@ class Guard(unittest.TestCase):
             "~/.local/bin/terraform-1.15 apply",
             "terraspace up",
             "terraspace all down",
+            "python3 -c 'import pty; pty.spawn([\"scripts/boundary.sh\",\"apply\",\"./infra\",\"dev\"])'",
+            "script -q /dev/null scripts/boundary.sh apply ./infra dev",
+            "/usr/bin/expect -c 'spawn scripts/boundary.sh apply ./infra dev'",
             "ter\\\nraform apply",
         ]:
             with self.subTest(cmd=cmd):
@@ -84,7 +87,7 @@ class Guard(unittest.TestCase):
             "terraform -chdir=infra/terraform-aws/envs/dev plan",
             "infra/terraform-aws/src/build.sh",
             "ls terraform-gcp/envs",
-            "set -o pipefail; scripts/boundary.sh check ./infra 2>&1 | tee ./infra/.boundary/evidence-$(date +%F).log",
+            "set -o pipefail; scripts/boundary.sh check ./infra 2>&1 | tee ./infra/.boundary/evidence-2026-10-04.log",
             "scripts/boundary.sh fetch aws ./infra",
             "terragrunt plan",
             "terragrunt run-all plan",
@@ -106,6 +109,26 @@ class Guard(unittest.TestCase):
 def raw(event):
     proc = subprocess.run([sys.executable, str(GUARD)], input=json.dumps(event), capture_output=True, text=True)
     return proc.returncode, proc.stdout
+
+
+class FailClosedAndEveryTool(unittest.TestCase):
+    """Anything the guard cannot read blocks; any tool that is not known to be harmless is checked."""
+
+    def run_raw(self, text):
+        return subprocess.run([sys.executable, str(GUARD)], input=text, capture_output=True, text=True).returncode
+
+    def test_unreadable_or_unrecognised_input_blocks(self):
+        self.assertEqual(self.run_raw("not json"), 2)
+        self.assertEqual(self.run_raw(json.dumps({"something": "else"})), 2)
+
+    def test_other_tools_that_run_commands_are_checked(self):
+        self.assertEqual(raw({"tool_name": "Monitor", "tool_input": {"command": "terraform apply -input=false"}})[0], 2)
+        self.assertEqual(raw({"tool_name": "PowerShell", "tool_input": {"command": "terraform destroy"}})[0], 2)
+        self.assertEqual(raw({"tool_name": "Monitor", "tool_input": {"command": "tail -f app.log"}})[0], 0)
+
+    def test_content_tools_may_mention_terraform_apply(self):
+        self.assertEqual(raw({"tool_name": "Write", "tool_input": {"file_path": "README.md", "content": "Run terraform apply yourself."}})[0], 0)
+        self.assertEqual(raw({"tool_name": "Read", "tool_input": {"file_path": "docs/terraform-apply.md"}})[0], 0)
 
 
 class McpTools(unittest.TestCase):

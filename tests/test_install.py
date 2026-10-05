@@ -71,9 +71,9 @@ class Install(unittest.TestCase):
         install("codex", self.home)
         install("codex", self.home)
         hooks = self.config(".codex/hooks.json")["hooks"]["PreToolUse"]
-        self.assertEqual(len(hooks), 3)  # yours, the guard on the shell, the guard on MCP tools
+        self.assertEqual(len(hooks), 2)  # yours, and the guard on every tool call
         self.assertIn("mine.sh", json.dumps(hooks[0]))
-        self.assertEqual([h["matcher"] for h in hooks[1:]], ["^Bash$", "^mcp__"])
+        self.assertNotIn("matcher", hooks[1])
         self.assertTrue((self.home / ".codex/hooks.json.bak").is_file())
 
     def test_unknown_agent_is_refused(self):

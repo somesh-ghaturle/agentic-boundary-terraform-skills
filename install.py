@@ -47,10 +47,9 @@ def hook_target(agent, home, guard):
     command = f'python3 "{guard}"'
     if agent == "codex":
         codex_home = pathlib.Path(os.environ.get("CODEX_HOME") or home / ".codex")
-        hook = [{"type": "command", "command": command}]
+        # No matcher: every tool call reaches the guard, which skips content-only tools itself.
         return codex_home / "hooks.json", [
-            ("PreToolUse", {"matcher": "^Bash$", "hooks": hook}),
-            ("PreToolUse", {"matcher": "^mcp__", "hooks": hook}),
+            ("PreToolUse", {"hooks": [{"type": "command", "command": command}]}),
         ], {}
     if agent == "cursor":
         return home / ".cursor" / "hooks.json", [

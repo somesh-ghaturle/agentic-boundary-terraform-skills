@@ -10,9 +10,12 @@ command the agent issues, and each blocks on exit code 2:
   Windsurf     pre_run_command hook       {"agent_action_name": "pre_run_command",
                                            "tool_info": {"command_line": ...}}
 
-MCP tools can run commands too, so their calls are checked as well: Claude Code and Codex
-PreToolUse for mcp__* tools, Cursor beforeMCPExecution, Windsurf pre_mcp_tool_use. Every string
-argument is read as a command. A message that merely quotes `terraform apply` is denied too.
+Other tools can run commands too: MCP servers, Claude Code's Monitor, a PowerShell tool. So in
+Claude Code and Codex every tool call is checked, except tools that only carry file content or
+prose (Read, Write, Edit, ...); Cursor and Windsurf hook their MCP events. Every string argument
+is read as a command, so a message that merely quotes `terraform apply` is denied too.
+
+It fails closed: an error, or a payload it does not recognise, blocks the call.
 
 It blocks anything that would change real infrastructure:
 
@@ -62,7 +65,19 @@ MENTION = re.compile(rf'(?<![\w-])({NAMES})(?:[-_.]?v?\d[\w.]*)?(?![\w-])', re.I
 # A token that can only be a path or a flag value, never code that runs something.
 PLAIN = re.compile(r'^[\w./=:@+-]+$')
 EXPANSION = set("$`{}*?[]")
-INDIRECT = {"xargs", "parallel", "alias", "eval", "source", ".", "function"}
+# Commands that pass arguments on indirectly, or drive a terminal another program reads, which
+# is how an agent could answer boundary.sh apply's fingerprint prompt itself.
+INDIRECT = {"xargs", "parallel", "alias", "eval", "source", ".", "function",
+            "script", "expect", "unbuffer", "tmux", "screen", "socat"}
+# Tools whose string arguments are file content or prose, never something that runs.
+CONTENT_TOOLS = {"Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "NotebookRead", "Glob", "Grep",
+                 "LS", "WebFetch", "WebSearch", "TodoWrite", "Task", "Agent", "apply_patch"}
+
+
+def mentioned(text):
+    """Does text name Terraform, a wrapper, or boundary.sh, once quotes and backslashes are gone?"""
+    literal = re.sub(r"[\\'\"]", "", text)
+    return bool(MENTION.search(literal)) or "boundary.sh" in literal.lower()
 
 
 def tool(token):
@@ -88,9 +103,8 @@ def problem(command, depth=0):
     command = command.replace("\\\r\n", "").replace("\\\n", "")
     if "$'" in command:
         return "ANSI-C quoting ($'...') can spell any command; write it out literally"
-    literal = re.sub(r"[\\'\"]", "", command)
-    if MENTION.search(literal) and EXPANSION & set(command):
-        return "a command that mentions Terraform must not use shell expansion ($ ` { } * ? [ ])"
+    if mentioned(command) and EXPANSION & set(command):
+        return "a command that mentions Terraform or boundary.sh must not use shell expansion ($ ` { } * ? [ ])"
     try:
         tokens = words(command)
     except ValueError:
@@ -98,12 +112,13 @@ def problem(command, depth=0):
         if any(k in command.lower() for k in ("terraform", "tofu", "boundary.sh")):
             return "could not parse a command that mentions terraform or boundary.sh"
         return None
-    if MENTION.search(literal) and any(t.lower() in INDIRECT for t in tokens):
-        return "a command that mentions Terraform must not pass arguments through xargs, alias or eval"
+    if mentioned(command) and any(os.path.basename(t).lower() in INDIRECT for t in tokens):
+        return ("a command that mentions Terraform or boundary.sh must not pass arguments through "
+                "xargs, alias or eval, or drive a terminal with script, expect, tmux or similar")
     for tok in tokens:
-        # Terraform named somewhere other than as a command, a plain path, or a quoted command
-        # the guard parses below, e.g. inside perl -e 'system("terraform","apply")'.
-        if (MENTION.search(re.sub(r"[\\'\"]", "", tok)) and tool(tok) is None
+        # Terraform or boundary.sh named somewhere other than as a command, a plain path, or a
+        # quoted command the guard parses below, e.g. inside perl -e 'system("terraform","apply")'.
+        if (mentioned(tok) and tool(tok) is None
                 and not PLAIN.match(tok) and not any(c.isspace() for c in tok)):
             return f"`{tok}` names Terraform inside other code; run the command directly so it can be checked"
     for i, tok in enumerate(tokens):
@@ -162,21 +177,31 @@ def extract(event):
         return "cursor", "mcp", list(strings(args))
     if "tool_name" in event:                                             # Claude Code, Codex
         name = str(event.get("tool_name"))
-        if name.startswith("mcp__"):
-            return "claude-or-codex", "mcp", list(strings(event.get("tool_input")))
-        if name != "Bash":
+        if name in CONTENT_TOOLS:
             return None, None, []
+        if name != "Bash":
+            # MCP tools, Monitor, PowerShell, and any tool not known to be harmless.
+            return "claude-or-codex", "mcp", list(strings(event.get("tool_input")))
         command = (event.get("tool_input") or {}).get("command", "")
         if isinstance(command, list):
             command = shlex.join(str(part) for part in command)
         return "claude-or-codex", "shell", [str(command)]
     if "command" in event:                                               # Cursor shell
         return "cursor", "shell", [str(event["command"])]
-    return None, None, []
+    raise ValueError("unrecognised hook payload")
 
 
 def main():
-    agent, kind, commands = extract(json.load(sys.stdin))
+    raw = sys.stdin.read()
+    try:
+        event = json.loads(raw)
+        agent, kind, commands = extract(event)
+    except Exception as err:  # fail closed: an input the guard cannot read is not an approval
+        message = f"Blocked by agentic-boundary: could not read the hook input ({err}); refusing to guess."
+        print(message, file=sys.stderr)
+        if '"command"' in raw or "mcp_server_name" in raw:
+            print(json.dumps({"permission": "deny", "user_message": message, "agent_message": message}))
+        return 2
     if agent is None:
         return 0
     why = next(filter(None, (problem(c) for c in commands)), None)
@@ -188,8 +213,7 @@ def main():
             print(json.dumps({"permission": "deny", "user_message": message, "agent_message": message}))
         return 2
     if agent == "cursor":
-        mentioned = any(MENTION.search(re.sub(r"[\\'\"]", "", c)) for c in commands)
-        if kind == "mcp" and not mentioned:
+        if kind == "mcp" and not any(mentioned(c) for c in commands):
             # Cursor needs a decision on exit 0 and its MCP hook has no matcher. "allow" would
             # skip the human's own MCP approval, so the guard steps aside instead: any exit code
             # other than 0 or 2 means "hook failed, action proceeds" through Cursor's normal flow.
