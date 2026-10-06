@@ -1,6 +1,9 @@
 # Agentic Boundary Terraform Skills
 
-A Claude Code skill for deploying an AI agent whose state-changing actions cannot reach production without a human approving that exact action. It adapts the Terraform in [Agentic-AI-Systems](https://github.com/somesh-ghaturle/Agentic-AI-Systems) instead of copying it by hand, and it gates every change on that repository's own write-boundary checks.
+[![Plugin Security Scan](https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills/actions/workflows/plugin-scan.yml/badge.svg)](https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills/actions/workflows/plugin-scan.yml)
+[![Latest release](https://img.shields.io/github/v/release/somesh-ghaturle/agentic-boundary-terraform-skills)](https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills/releases/latest)
+
+A skill for Claude Code, Codex, Cursor and Windsurf for deploying an AI agent whose state-changing actions cannot reach production without a human approving that exact action. It adapts the Terraform in [Agentic-AI-Systems](https://github.com/somesh-ghaturle/Agentic-AI-Systems) instead of copying it by hand, and it gates every change on that repository's own write-boundary checks.
 
 It is built on three pillars, and does nothing outside them:
 
