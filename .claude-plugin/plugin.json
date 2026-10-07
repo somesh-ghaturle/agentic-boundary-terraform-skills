@@ -5,6 +5,16 @@
   "author": {
     "name": "Somesh Ghaturle"
   },
+  "homepage": "https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills",
   "repository": "https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "keywords": [
+    "terraform",
+    "human-in-the-loop",
+    "security",
+    "aws",
+    "azure",
+    "gcp",
+    "snowflake"
+  ]
 }
