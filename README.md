@@ -1,5 +1,7 @@
 # Agentic Boundary Terraform Skills
 
+[![HOL Guard](https://img.shields.io/endpoint?url=https%3A%2F%2Fhol.org%2Fapi%2Fregistry%2Fbadges%2Fplugin%3Fslug%3Dsomesh-ghaturle%252Fagentic-boundary-terraform%26metric%3Dtrust)](https://hol.org/registry/plugins/somesh-ghaturle%2Fagentic-boundary-terraform)
+
 [![Plugin Security Scan](https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills/actions/workflows/plugin-scan.yml/badge.svg)](https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills/actions/workflows/plugin-scan.yml)
 [![Latest release](https://img.shields.io/github/v/release/somesh-ghaturle/agentic-boundary-terraform-skills)](https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills/releases/latest)
 
