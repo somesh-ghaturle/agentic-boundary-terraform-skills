@@ -1,0 +1,50 @@
+{
+  "name": "agentic-boundary-terraform",
+  "version": "1.6.2",
+  "description": "Human-in-the-loop deployment of Agentic-AI-Systems agents on AWS, Azure, GCP or Snowflake, with security review and regulated-environment evidence. Works in Claude Code, Codex, Cursor and Windsurf. Only a human applies.",
+  "author": {
+    "name": "Somesh Ghaturle",
+    "url": "https://github.com/somesh-ghaturle"
+  },
+  "homepage": "https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills",
+  "repository": "https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "terraform",
+    "human-in-the-loop",
+    "security",
+    "aws",
+    "azure",
+    "gcp",
+    "snowflake"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Terraform Boundary",
+    "shortDescription": "AI coding agents can plan your Terraform. Only a human can apply it.",
+    "longDescription": "Deploys Agentic-AI-Systems agents on AWS, Azure, GCP or Snowflake behind a human-approval write boundary. A hook blocks terraform apply, destroy and -auto-approve; boundary.sh apply needs a real terminal and the plan's fingerprint typed by a human; and the agent gets read-only cloud credentials. Every change is gated on the pinned release's write-boundary tests, provider pins, OPA policies and terraform validate.",
+    "developerName": "Somesh Ghaturle",
+    "category": "Security",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills#readme",
+    "privacyPolicyURL": "https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills/blob/main/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/somesh-ghaturle/agentic-boundary-terraform-skills/blob/main/LICENSE",
+    "defaultPrompt": [
+      "Set up the approval-gated agent on GCP in ./infra",
+      "Check ./infra against the write boundary"
+    ],
+    "brandColor": "#4F46E5",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg",
+    "screenshots": [
+      "./assets/screenshots/cover.png",
+      "./assets/screenshots/gcp-fetch-and-check.png",
+      "./assets/screenshots/guard-blocks-apply.png",
+      "./assets/screenshots/widened-boundary-refused.png"
+    ]
+  }
+}
